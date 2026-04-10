@@ -12,7 +12,7 @@ import WeakPointsPanel from "@/components/pronunciation/WeakPointsPanel";
 import WordInsightPanel from "@/components/vocabulary/WordInsightPanel";
 import type { ArticleData, WordInsight } from "@/lib/types";
 
-const sampleArticle: ArticleData = {
+const initialArticle: ArticleData = {
   title: "Une promenade dans un quartier de Montréal",
   source: "Demo article",
   level: "B1–B2",
@@ -52,8 +52,11 @@ export default function Page() {
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  
+  const [article, setArticle] = useState<ArticleData>(initialArticle);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  const fallbackInsight = useMemo<WordInsight | null>(() => {
+ const fallbackInsight = useMemo<WordInsight | null>(() => {
   if (!selectedWordKey) return null;
 
   return {
@@ -67,36 +70,75 @@ export default function Page() {
     conjugation: "À analyser",
     usage:
       "Aucune fiche locale pour ce mot pour l'instant. Plus tard, cette zone sera remplie par l'analyse AI.",
-    sentence: findSentenceForWord(sampleArticle.text, selectedWordKey) || "—",
+    sentence: findSentenceForWord(article.text, selectedWordKey) || "—",
     francePronunciation: "À venir",
     quebecPronunciation: "À venir",
   };
-}, [selectedWordKey]);
+}, [selectedWordKey, article.text]);
 
+async function handleGenerateArticle() {
+  try {
+    setIsGenerating(true);
+
+    const response = await fetch("/api/generate-article", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contentType,
+        level,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to generate article.");
+    }
+
+    const data = await response.json();
+
+    setArticle({
+      title: data.title,
+      source: data.source,
+      level: data.level,
+      text: data.text,
+    });
+
+    setSelectedWord(null);
+    setSelectedWordKey(null);
+  } catch (error) {
+    console.error(error);
+    alert("Could not generate article.");
+  } finally {
+    setIsGenerating(false);
+  }
+}
   return (
     <AppShell>
-      <ArticleHeader article={sampleArticle} />
+      <ArticleHeader article={article} />
 
       <ReadingSetupBar
-        contentType={contentType}
-        level={level}
-        isPlayingAudio={isPlayingAudio}
-        onContentTypeChange={setContentType}
-        onLevelChange={setLevel}
-        onPlayAudio={() => setIsPlayingAudio((prev) => !prev)}
-      />
+  contentType={contentType}
+  level={level}
+  isPlayingAudio={isPlayingAudio}
+  isGenerating={isGenerating}
+  onContentTypeChange={setContentType}
+  onLevelChange={setLevel}
+  onPlayAudio={() => setIsPlayingAudio((prev) => !prev)}
+  onGenerateArticle={handleGenerateArticle}
+/>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
           <ArticleTextPanel
-            article={sampleArticle}
+            article={article}
             selectedWord={selectedWordKey}
             onWordClick={(rawWord) => {
   const cleaned = normalizeWord(rawWord);
   if (!cleaned) return;
 
   const insight = getWordInsight(cleaned);
-  const sentence = findSentenceForWord(sampleArticle.text, cleaned);
+  const sentence = findSentenceForWord(article.text, cleaned);
 
   setSelectedWordKey(cleaned);
 
