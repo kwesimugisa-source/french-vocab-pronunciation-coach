@@ -50,7 +50,9 @@ function findSentenceForWord(text: string, targetWord: string) {
 export default function Page() {
   const [selectedWord, setSelectedWord] = useState<WordInsight | null>(null);
   const [selectedWordKey, setSelectedWordKey] = useState<string | null>(null);
-
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
@@ -201,43 +203,97 @@ async function handlePlayAudio() {
     alert("Could not play AI reading.");
   }
 }
-  async function handleGenerateArticle() {
-    try {
-      setIsGenerating(true);
+async function handleStartReading() {
+  try {
+    if (isRecording) return;
 
-      const response = await fetch("/api/generate-article", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contentType,
-          level,
-        }),
-      });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    const chunks: BlobPart[] = [];
 
-      if (!response.ok) {
-        throw new Error("Failed to generate article.");
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunks.push(event.data);
       }
+    };
 
-      const data = await response.json();
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      setRecordedAudioBlob(blob);
+      setIsRecording(false);
 
-      setArticle({
-        title: data.title,
-        source: data.source,
-        level: data.level,
-        text: data.text,
-      });
+      stream.getTracks().forEach((track) => track.stop());
+    };
 
-      setSelectedWord(null);
-      setSelectedWordKey(null);
-    } catch (error) {
-      console.error(error);
-      alert("Could not generate article.");
-    } finally {
-      setIsGenerating(false);
-    }
+    recorder.start();
+    setRecordedAudioBlob(null);
+    setMediaRecorder(recorder);
+    setIsRecording(true);
+  } catch (error) {
+    console.error(error);
+    alert("Could not access microphone.");
   }
+}
+
+function handleStopReading() {
+  if (!mediaRecorder || !isRecording) return;
+  mediaRecorder.stop();
+  setMediaRecorder(null);
+}
+ async function handleGenerateArticle() {
+  try {
+    setIsGenerating(true);
+
+    const response = await fetch("/api/generate-article", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contentType,
+        level,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to generate article.");
+    }
+
+    const data = await response.json();
+
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+    }
+
+    setAudio(null);
+    setAudioUrl(null);
+    setIsPlayingAudio(false);
+
+    setRecordedAudioBlob(null);
+    setIsRecording(false);
+    setMediaRecorder(null);
+
+    setArticle({
+      title: data.title,
+      source: data.source,
+      level: data.level,
+      text: data.text,
+    });
+
+    setSelectedWord(null);
+    setSelectedWordKey(null);
+  } catch (error) {
+    console.error(error);
+    alert("Could not generate article.");
+  } finally {
+    setIsGenerating(false);
+  }
+}
 
   return (
     <AppShell>
@@ -268,7 +324,20 @@ async function handlePlayAudio() {
         </div>
       </div>
 
-      <ReadingControls />
+      <ReadingControls
+  isRecording={isRecording}
+  hasRecording={!!recordedAudioBlob}
+  onStartReading={handleStartReading}
+  onStopReading={handleStopReading}
+  onAnalyzePronunciation={() => {
+    if (!recordedAudioBlob) {
+      alert("Record your reading first.");
+      return;
+    }
+
+    alert("Recording captured. Pronunciation analysis comes next.");
+  }}
+/>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <PronunciationSummary />
