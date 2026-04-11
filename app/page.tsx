@@ -54,7 +54,7 @@ export default function Page() {
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-
+  const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
   const [article, setArticle] = useState<ArticleData>(initialArticle);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -135,6 +135,51 @@ export default function Page() {
     }
   }
 
+async function handlePlayAudio() {
+  try {
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+      setAudio(null);
+      setIsPlayingAudio(false);
+      return;
+    }
+
+    setIsPlayingAudio(true);
+
+    const response = await fetch("/api/read-passage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text: article.text,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to generate audio.");
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    const newAudio = new Audio(url);
+    setAudio(newAudio);
+
+    newAudio.onended = () => {
+      URL.revokeObjectURL(url);
+      setAudio(null);
+      setIsPlayingAudio(false);
+    };
+
+    await newAudio.play();
+  } catch (error) {
+    console.error(error);
+    setIsPlayingAudio(false);
+    alert("Could not play AI reading.");
+  }
+}
   async function handleGenerateArticle() {
     try {
       setIsGenerating(true);
@@ -178,15 +223,15 @@ export default function Page() {
       <ArticleHeader article={article} />
 
       <ReadingSetupBar
-        contentType={contentType}
-        level={level}
-        isPlayingAudio={isPlayingAudio}
-        isGenerating={isGenerating}
-        onContentTypeChange={setContentType}
-        onLevelChange={setLevel}
-        onPlayAudio={() => setIsPlayingAudio((prev) => !prev)}
-        onGenerateArticle={handleGenerateArticle}
-      />
+  contentType={contentType}
+  level={level}
+  isPlayingAudio={isPlayingAudio}
+  isGenerating={isGenerating}
+  onContentTypeChange={setContentType}
+  onLevelChange={setLevel}
+  onPlayAudio={handlePlayAudio}
+  onGenerateArticle={handleGenerateArticle}
+/>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
