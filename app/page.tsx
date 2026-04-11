@@ -54,10 +54,11 @@ export default function Page() {
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
+  
   const [article, setArticle] = useState<ArticleData>(initialArticle);
   const [isGenerating, setIsGenerating] = useState(false);
-
+  const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const fallbackInsight = useMemo<WordInsight | null>(() => {
     if (!selectedWordKey) return null;
 
@@ -140,7 +141,9 @@ async function handlePlayAudio() {
     if (audio) {
       audio.pause();
       audio.currentTime = 0;
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
       setAudio(null);
+      setAudioUrl(null);
       setIsPlayingAudio(false);
       return;
     }
@@ -158,20 +161,38 @@ async function handlePlayAudio() {
     });
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error("read-passage failed:", errorText);
       throw new Error("Failed to generate audio.");
     }
 
     const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
+    console.log("Audio blob:", blob.size, blob.type);
 
+    if (!blob.size) {
+      throw new Error("Audio response was empty.");
+    }
+
+    const url = URL.createObjectURL(blob);
     const newAudio = new Audio(url);
-    setAudio(newAudio);
 
     newAudio.onended = () => {
       URL.revokeObjectURL(url);
       setAudio(null);
+      setAudioUrl(null);
       setIsPlayingAudio(false);
     };
+
+    newAudio.onerror = () => {
+      URL.revokeObjectURL(url);
+      setAudio(null);
+      setAudioUrl(null);
+      setIsPlayingAudio(false);
+      console.error("Audio playback error.");
+    };
+
+    setAudio(newAudio);
+    setAudioUrl(url);
 
     await newAudio.play();
   } catch (error) {
