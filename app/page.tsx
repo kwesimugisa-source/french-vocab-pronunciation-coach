@@ -31,9 +31,7 @@ function normalizeWord(word: string) {
 }
 
 function splitIntoSentences(text: string) {
-  return text
-    .replace(/\n+/g, " ")
-    .match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+  return text.replace(/\n+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
 }
 
 function findSentenceForWord(text: string, targetWord: string) {
@@ -50,17 +48,32 @@ function findSentenceForWord(text: string, targetWord: string) {
 export default function Page() {
   const [selectedWord, setSelectedWord] = useState<WordInsight | null>(null);
   const [selectedWordKey, setSelectedWordKey] = useState<string | null>(null);
+
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  
+
   const [article, setArticle] = useState<ArticleData>(initialArticle);
   const [isGenerating, setIsGenerating] = useState(false);
+
   const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  const [pronunciationSummary, setPronunciationSummary] = useState<{
+    overall: string;
+    clarity: string;
+    rhythm: string;
+    priority: string;
+  } | null>(null);
+
+  const [pronunciationWeakPoints, setPronunciationWeakPoints] = useState<
+    { word: string; note: string; severity: "low" | "medium" | "high" }[]
+  >([]);
+
   const fallbackInsight = useMemo<WordInsight | null>(() => {
     if (!selectedWordKey) return null;
 
@@ -138,177 +151,214 @@ export default function Page() {
     }
   }
 
-async function handlePlayAudio() {
-  try {
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-      setAudio(null);
-      setAudioUrl(null);
-      setIsPlayingAudio(false);
-      return;
-    }
-
-    setIsPlayingAudio(true);
-
-    const response = await fetch("/api/read-passage", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: article.text,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("read-passage failed:", errorText);
-      throw new Error("Failed to generate audio.");
-    }
-
-    const blob = await response.blob();
-    console.log("Audio blob:", blob.size, blob.type);
-
-    if (!blob.size) {
-      throw new Error("Audio response was empty.");
-    }
-
-    const url = URL.createObjectURL(blob);
-    const newAudio = new Audio(url);
-
-    newAudio.onended = () => {
-      URL.revokeObjectURL(url);
-      setAudio(null);
-      setAudioUrl(null);
-      setIsPlayingAudio(false);
-    };
-
-    newAudio.onerror = () => {
-      URL.revokeObjectURL(url);
-      setAudio(null);
-      setAudioUrl(null);
-      setIsPlayingAudio(false);
-      console.error("Audio playback error.");
-    };
-
-    setAudio(newAudio);
-    setAudioUrl(url);
-
-    await newAudio.play();
-  } catch (error) {
-    console.error(error);
-    setIsPlayingAudio(false);
-    alert("Could not play AI reading.");
-  }
-}
-async function handleStartReading() {
-  try {
-    if (isRecording) return;
-
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const recorder = new MediaRecorder(stream);
-    const chunks: BlobPart[] = [];
-
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        chunks.push(event.data);
+  async function handlePlayAudio() {
+    try {
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+        setAudio(null);
+        setAudioUrl(null);
+        setIsPlayingAudio(false);
+        return;
       }
-    };
 
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "audio/webm" });
-      setRecordedAudioBlob(blob);
-      setIsRecording(false);
+      setIsPlayingAudio(true);
 
-      stream.getTracks().forEach((track) => track.stop());
-    };
+      const response = await fetch("/api/read-passage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: article.text,
+        }),
+      });
 
-    recorder.start();
-    setRecordedAudioBlob(null);
-    setMediaRecorder(recorder);
-    setIsRecording(true);
-  } catch (error) {
-    console.error(error);
-    alert("Could not access microphone.");
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("read-passage failed:", errorText);
+        throw new Error("Failed to generate audio.");
+      }
+
+      const blob = await response.blob();
+
+      if (!blob.size) {
+        throw new Error("Audio response was empty.");
+      }
+
+      const url = URL.createObjectURL(blob);
+      const newAudio = new Audio(url);
+
+      newAudio.onended = () => {
+        URL.revokeObjectURL(url);
+        setAudio(null);
+        setAudioUrl(null);
+        setIsPlayingAudio(false);
+      };
+
+      newAudio.onerror = () => {
+        URL.revokeObjectURL(url);
+        setAudio(null);
+        setAudioUrl(null);
+        setIsPlayingAudio(false);
+        console.error("Audio playback error.");
+      };
+
+      setAudio(newAudio);
+      setAudioUrl(url);
+
+      await newAudio.play();
+    } catch (error) {
+      console.error(error);
+      setIsPlayingAudio(false);
+      alert("Could not play AI reading.");
+    }
   }
-}
 
-function handleStopReading() {
-  if (!mediaRecorder || !isRecording) return;
-  mediaRecorder.stop();
-  setMediaRecorder(null);
-}
- async function handleGenerateArticle() {
-  try {
-    setIsGenerating(true);
+  async function handleStartReading() {
+    try {
+      if (isRecording) return;
 
-    const response = await fetch("/api/generate-article", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contentType,
-        level,
-      }),
-    });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
 
-    if (!response.ok) {
-      throw new Error("Failed to generate article.");
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        setRecordedAudioBlob(blob);
+        setIsRecording(false);
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      recorder.start();
+      setRecordedAudioBlob(null);
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+    } catch (error) {
+      console.error(error);
+      alert("Could not access microphone.");
     }
+  }
 
-    const data = await response.json();
-
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-    }
-
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-    }
-
-    setAudio(null);
-    setAudioUrl(null);
-    setIsPlayingAudio(false);
-
-    setRecordedAudioBlob(null);
-    setIsRecording(false);
+  function handleStopReading() {
+    if (!mediaRecorder || !isRecording) return;
+    mediaRecorder.stop();
     setMediaRecorder(null);
-
-    setArticle({
-      title: data.title,
-      source: data.source,
-      level: data.level,
-      text: data.text,
-    });
-
-    setSelectedWord(null);
-    setSelectedWordKey(null);
-  } catch (error) {
-    console.error(error);
-    alert("Could not generate article.");
-  } finally {
-    setIsGenerating(false);
   }
-}
+
+  async function handleAnalyzePronunciation() {
+    try {
+      if (!recordedAudioBlob) {
+        alert("Record your reading first.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("audio", recordedAudioBlob, "reading.webm");
+      formData.append("text", article.text);
+
+      const response = await fetch("/api/analyze-pronunciation", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("analyze-pronunciation failed:", errorText);
+        throw new Error("Failed to analyze pronunciation.");
+      }
+
+      const data = await response.json();
+
+      setPronunciationSummary(data.summary);
+      setPronunciationWeakPoints(data.weakPoints || []);
+
+      alert("Pronunciation analysis received.");
+      console.log("Transcript:", data.transcript);
+    } catch (error) {
+      console.error(error);
+      alert("Could not analyze pronunciation.");
+    }
+  }
+
+  async function handleGenerateArticle() {
+    try {
+      setIsGenerating(true);
+
+      const response = await fetch("/api/generate-article", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contentType,
+          level,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate article.");
+      }
+
+      const data = await response.json();
+
+      if (audio) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+
+      setAudio(null);
+      setAudioUrl(null);
+      setIsPlayingAudio(false);
+
+      setRecordedAudioBlob(null);
+      setIsRecording(false);
+      setMediaRecorder(null);
+
+      setArticle({
+        title: data.title,
+        source: data.source,
+        level: data.level,
+        text: data.text,
+      });
+
+      setSelectedWord(null);
+      setSelectedWordKey(null);
+      setPronunciationSummary(null);
+      setPronunciationWeakPoints([]);
+    } catch (error) {
+      console.error(error);
+      alert("Could not generate article.");
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
   return (
     <AppShell>
       <ArticleHeader article={article} />
 
       <ReadingSetupBar
-  contentType={contentType}
-  level={level}
-  isPlayingAudio={isPlayingAudio}
-  isGenerating={isGenerating}
-  onContentTypeChange={setContentType}
-  onLevelChange={setLevel}
-  onPlayAudio={handlePlayAudio}
-  onGenerateArticle={handleGenerateArticle}
-/>
+        contentType={contentType}
+        level={level}
+        isPlayingAudio={isPlayingAudio}
+        isGenerating={isGenerating}
+        onContentTypeChange={setContentType}
+        onLevelChange={setLevel}
+        onPlayAudio={handlePlayAudio}
+        onGenerateArticle={handleGenerateArticle}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
@@ -325,23 +375,16 @@ function handleStopReading() {
       </div>
 
       <ReadingControls
-  isRecording={isRecording}
-  hasRecording={!!recordedAudioBlob}
-  onStartReading={handleStartReading}
-  onStopReading={handleStopReading}
-  onAnalyzePronunciation={() => {
-    if (!recordedAudioBlob) {
-      alert("Record your reading first.");
-      return;
-    }
-
-    alert("Recording captured. Pronunciation analysis comes next.");
-  }}
-/>
+        isRecording={isRecording}
+        hasRecording={!!recordedAudioBlob}
+        onStartReading={handleStartReading}
+        onStopReading={handleStopReading}
+        onAnalyzePronunciation={handleAnalyzePronunciation}
+      />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <PronunciationSummary />
-        <WeakPointsPanel />
+        <PronunciationSummary summary={pronunciationSummary} />
+        <WeakPointsPanel weakPoints={pronunciationWeakPoints} />
       </div>
     </AppShell>
   );
