@@ -254,40 +254,43 @@ export default function Page() {
   }
 
   async function handleAnalyzePronunciation() {
-    try {
-      if (!recordedAudioBlob) {
-        alert("Record your reading first.");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append("audio", recordedAudioBlob, "reading.webm");
-      formData.append("text", article.text);
-
-      const response = await fetch("/api/analyze-pronunciation", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("analyze-pronunciation failed:", errorText);
-        throw new Error("Failed to analyze pronunciation.");
-      }
-
-      const data = await response.json();
-
-console.log("Pronunciation analysis payload:", data);
-console.log("Summary received:", data.summary);
-console.log("Weak points received:", data.weakPoints);
-
-setPronunciationSummary(data.summary ?? null);
-setPronunciationWeakPoints(data.weakPoints || []);
-
-alert("Pronunciation analysis received.");
-console.log("Transcript:", data.transcript);
+  try {
+    if (!recordedAudioBlob) {
+      alert("Record your reading first.");
+      return;
     }
+
+    const formData = new FormData();
+    formData.append("audio", recordedAudioBlob, "reading.webm");
+    formData.append("text", article.text);
+
+    const response = await fetch("/api/analyze-pronunciation", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("analyze-pronunciation failed:", errorText);
+      throw new Error("Failed to analyze pronunciation.");
+    }
+
+    const data = await response.json();
+
+    console.log("Pronunciation analysis payload:", data);
+    console.log("Summary received:", data.summary);
+    console.log("Weak points received:", data.weakPoints);
+
+    setPronunciationSummary(data.summary ?? null);
+    setPronunciationWeakPoints(data.weakPoints || []);
+
+    alert("Pronunciation analysis received.");
+    console.log("Transcript:", data.transcript);
+  } catch (error) {
+    console.error(error);
+    alert("Could not analyze pronunciation.");
   }
+}
 
   async function handleGenerateArticle() {
     try {
