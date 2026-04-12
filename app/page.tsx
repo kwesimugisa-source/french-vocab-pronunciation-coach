@@ -277,14 +277,15 @@ export default function Page() {
 
       const data = await response.json();
 
-      setPronunciationSummary(data.summary);
-      setPronunciationWeakPoints(data.weakPoints || []);
+console.log("Pronunciation analysis payload:", data);
+console.log("Summary received:", data.summary);
+console.log("Weak points received:", data.weakPoints);
 
-      alert("Pronunciation analysis received.");
-      console.log("Transcript:", data.transcript);
-    } catch (error) {
-      console.error(error);
-      alert("Could not analyze pronunciation.");
+setPronunciationSummary(data.summary ?? null);
+setPronunciationWeakPoints(data.weakPoints || []);
+
+alert("Pronunciation analysis received.");
+console.log("Transcript:", data.transcript);
     }
   }
 
@@ -362,11 +363,12 @@ export default function Page() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
-          <ArticleTextPanel
-            article={article}
-            selectedWord={selectedWordKey}
-            onWordClick={handleAnalyzeWord}
-          />
+         <ArticleTextPanel
+  article={article}
+  selectedWord={selectedWordKey}
+  onWordClick={handleAnalyzeWord}
+  weakWords={pronunciationWeakPoints.map((item) => item.word)}
+/>
         </div>
 
         <div>

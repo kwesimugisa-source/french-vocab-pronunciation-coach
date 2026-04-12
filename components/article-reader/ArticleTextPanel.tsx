@@ -4,6 +4,7 @@ type Props = {
   article: ArticleData;
   onWordClick: (word: string) => void;
   selectedWord: string | null;
+  weakWords?: string[];
 };
 
 function normalizeWord(word: string) {
@@ -17,7 +18,12 @@ export default function ArticleTextPanel({
   article,
   onWordClick,
   selectedWord,
+  weakWords = [],
 }: Props) {
+  const normalizedSelectedWord = selectedWord ? normalizeWord(selectedWord) : null;
+
+  const weakWordSet = new Set(weakWords.map(normalizeWord).filter(Boolean));
+
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 border-b border-slate-100 pb-4">
@@ -32,7 +38,8 @@ export default function ArticleTextPanel({
           <p key={index}>
             {paragraph.split(" ").map((word, i) => {
               const cleaned = normalizeWord(word);
-              const isSelected = cleaned && cleaned === selectedWord;
+              const isSelected = cleaned && cleaned === normalizedSelectedWord;
+              const isWeak = cleaned && weakWordSet.has(cleaned);
 
               return (
                 <button
@@ -42,7 +49,11 @@ export default function ArticleTextPanel({
                   className={[
                     "inline rounded px-1 text-left transition",
                     "hover:bg-amber-100",
-                    isSelected ? "bg-amber-200 font-medium text-slate-900" : "",
+                    isSelected
+                      ? "bg-amber-200 font-medium text-slate-900"
+                      : isWeak
+                      ? "bg-rose-100 font-medium text-rose-700 ring-1 ring-rose-200"
+                      : "",
                   ].join(" ")}
                 >
                   {word}&nbsp;
