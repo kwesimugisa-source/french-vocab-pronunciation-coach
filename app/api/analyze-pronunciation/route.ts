@@ -73,7 +73,15 @@ Rules:
 - Keep feedback concise and practical.
 - If evidence is weak, say "possible issue" rather than overclaiming.
 - Return at most 6 weak points.
-- transcript must be the user's transcribed reading.`,
+- transcript must be the user's transcribed reading.
+
+CRITICAL:
+- Each weakPoints.word must be a SINGLE WORD only (no phrases).
+- Each weakPoints.word MUST appear exactly in the reference passage.
+- Do NOT return multi-word expressions.
+- Do NOT return transcript-only variants.
+- Preserve accents and apostrophes exactly as they appear in the reference passage.
+- If the issue involves a phrase, select the single most relevant word from the reference passage.`,
             },
           ],
         },
@@ -137,7 +145,10 @@ ${transcriptText}`,
 
     const parsed = JSON.parse(analysis.output_text);
 
-    return NextResponse.json(parsed);
+    return NextResponse.json({
+      ...parsed,
+      debugVersion: "REAL-AI-ROUTE-V1",
+    });
   } catch (error) {
     console.error("analyze-pronunciation error:", error);
     return NextResponse.json(
