@@ -21,7 +21,6 @@ export default function ArticleTextPanel({
   weakWords = [],
 }: Props) {
   const normalizedSelectedWord = selectedWord ? normalizeWord(selectedWord) : null;
-
   const weakWordSet = new Set(weakWords.map(normalizeWord).filter(Boolean));
 
   return (
@@ -33,11 +32,15 @@ export default function ArticleTextPanel({
         </p>
       </div>
 
-      <div className="space-y-4 text-[16px] leading-8 text-slate-700">
-        {article.text.split("\n\n").map((paragraph, index) => (
-          <p key={index}>
-            {paragraph.split(" ").map((word, i) => {
-              const cleaned = normalizeWord(word);
+      <div className="space-y-6 text-[16px] leading-8 text-slate-700">
+        {article.text.split("\n\n").map((block, index) => (
+          <p key={index} className="whitespace-pre-line">
+            {block.split(/(\s+)/).map((part, i) => {
+              if (/^\s+$/.test(part)) {
+                return part;
+              }
+
+              const cleaned = normalizeWord(part);
               const isSelected = cleaned && cleaned === normalizedSelectedWord;
               const isWeak = cleaned && weakWordSet.has(cleaned);
 
@@ -45,7 +48,7 @@ export default function ArticleTextPanel({
                 <button
                   key={`${index}-${i}`}
                   type="button"
-                  onClick={() => onWordClick(word)}
+                  onClick={() => onWordClick(part)}
                   className={[
                     "inline rounded px-1 text-left transition",
                     "hover:bg-amber-100",
@@ -56,7 +59,7 @@ export default function ArticleTextPanel({
                       : "",
                   ].join(" ")}
                 >
-                  {word}&nbsp;
+                  {part}
                 </button>
               );
             })}

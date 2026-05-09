@@ -13,16 +13,26 @@ export async function POST(req: Request) {
 
     const client = new OpenAI({ apiKey });
 
-    const { text } = await req.json();
+    const { text, speed = "normal" } = await req.json();
 
     if (!text) {
       return new Response("Missing text", { status: 400 });
     }
 
+    const speedMap: Record<string, number> = {
+      "very-slow": 0.7,
+      slow: 0.85,
+      normal: 1.0,
+      fast: 1.15,
+    };
+
+    const playbackSpeed = speedMap[speed] ?? 1.0;
+
     const audioResponse = await client.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
       input: text,
+      speed: playbackSpeed,
     });
 
     const buffer = await audioResponse.arrayBuffer();

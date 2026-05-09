@@ -1,10 +1,12 @@
 type Props = {
   contentType: string;
   level: string;
+  readingSpeed: string;
   isPlayingAudio: boolean;
   isGenerating: boolean;
   onContentTypeChange: (value: string) => void;
   onLevelChange: (value: string) => void;
+  onReadingSpeedChange: (value: string) => void;
   onPlayAudio: () => void;
   onGenerateArticle: () => void;
 };
@@ -16,24 +18,34 @@ const contentTypes = [
   { value: "conversation", label: "Conversation" },
   { value: "academic", label: "Academic" },
   { value: "everyday-life", label: "Everyday Life" },
+  { value: "poetry", label: "Poésie" },
 ];
 
 const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
+const readingSpeeds = [
+  { value: "very-slow", label: "Très lent" },
+  { value: "slow", label: "Lent" },
+  { value: "normal", label: "Normal" },
+  { value: "fast", label: "Rapide" },
+];
+
 export default function ReadingSetupBar({
   contentType,
   level,
+  readingSpeed,
   isPlayingAudio,
   isGenerating,
   onContentTypeChange,
   onLevelChange,
+  onReadingSpeedChange,
   onPlayAudio,
   onGenerateArticle,
 }: Props) {
   return (
     <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <div className="min-w-[220px]">
             <label
               htmlFor="contentType"
@@ -75,6 +87,27 @@ export default function ReadingSetupBar({
               ))}
             </select>
           </div>
+
+          <div className="min-w-[160px]">
+            <label
+              htmlFor="readingSpeed"
+              className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
+            >
+              AI Speed
+            </label>
+            <select
+              id="readingSpeed"
+              value={readingSpeed}
+              onChange={(e) => onReadingSpeedChange(e.target.value)}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-500"
+            >
+              {readingSpeeds.map((speed) => (
+                <option key={speed.value} value={speed.value}>
+                  {speed.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -98,7 +131,7 @@ export default function ReadingSetupBar({
       </div>
 
       <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        AI will generate a French passage based on your selected content type and level.
+        AI will generate a French passage based on your selected content type, level, and reading speed.
       </div>
     </section>
   );

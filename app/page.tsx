@@ -56,6 +56,7 @@ export default function Page() {
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [readingSpeed, setReadingSpeed] = useState("normal");
 
   const [article, setArticle] = useState<ArticleData>(initialArticle);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -70,9 +71,18 @@ export default function Page() {
     priority: string;
   } | null>(null);
 
+  const [pronunciationScore, setPronunciationScore] = useState<{
+  overall: number;
+  pronunciation: number;
+  fluency: number;
+  intonation: number;
+} | null>(null);
+
   const [pronunciationWeakPoints, setPronunciationWeakPoints] = useState<
     { word: string; note: string; severity: "low" | "medium" | "high" }[]
   >([]);
+
+const [learningWords, setLearningWords] = useState<string[]>([]);
 
   const fallbackInsight = useMemo<WordInsight | null>(() => {
     if (!selectedWordKey) return null;
@@ -171,8 +181,9 @@ export default function Page() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          text: article.text,
-        }),
+  text: article.text,
+  speed: readingSpeed,
+}),
       });
 
       if (!response.ok) {
@@ -282,7 +293,17 @@ export default function Page() {
     console.log("Weak points received:", data.weakPoints);
 
     setPronunciationSummary(data.summary ?? null);
+    setPronunciationScore(data.score ?? null);
     setPronunciationWeakPoints(data.weakPoints || []);
+
+    const newWords = (data.weakPoints || []).map(
+      (item: { word: string }) => item.word
+    );
+
+    setLearningWords((prev) => {
+      const merged = [...prev, ...newWords];
+      return [...new Set(merged)];
+    });
 
     alert("Pronunciation analysis received.");
     console.log("Transcript:", data.transcript);
@@ -302,9 +323,10 @@ export default function Page() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          contentType,
-          level,
-        }),
+  contentType,
+  level,
+  seed: Date.now(),
+}),
       });
 
       if (!response.ok) {
@@ -340,6 +362,7 @@ export default function Page() {
       setSelectedWord(null);
       setSelectedWordKey(null);
       setPronunciationSummary(null);
+      setPronunciationScore(null);
       setPronunciationWeakPoints([]);
     } catch (error) {
       console.error(error);
@@ -362,6 +385,8 @@ export default function Page() {
         onLevelChange={setLevel}
         onPlayAudio={handlePlayAudio}
         onGenerateArticle={handleGenerateArticle}
+        readingSpeed={readingSpeed}
+        onReadingSpeedChange={setReadingSpeed}
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
@@ -387,10 +412,37 @@ export default function Page() {
         onAnalyzePronunciation={handleAnalyzePronunciation}
       />
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <PronunciationSummary summary={pronunciationSummary} />
-        <WeakPointsPanel weakPoints={pronunciationWeakPoints} />
+      <div className="mt-6 space-y-6">
+  {pronunciationScore && (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-xl border bg-white p-4">
+        <div className="text-xs text-slate-500">Overall</div>
+        <div className="text-2xl font-bold">{pronunciationScore.overall}/100</div>
       </div>
+
+      <div className="rounded-xl border bg-white p-4">
+        <div className="text-xs text-slate-500">Pronunciation</div>
+        <div className="text-2xl font-bold">{pronunciationScore.pronunciation}/100</div>
+      </div>
+
+      <div className="rounded-xl border bg-white p-4">
+        <div className="text-xs text-slate-500">Fluency</div>
+        <div className="text-2xl font-bold">{pronunciationScore.fluency}/100</div>
+      </div>
+
+      <div className="rounded-xl border bg-white p-4">
+        <div className="text-xs text-slate-500">Intonation</div>
+        <div className="text-2xl font-bold">{pronunciationScore.intonation}/100</div>
+      </div>
+    </div>
+  )}
+
+  <div className="grid gap-6 lg:grid-cols-2">
+    <PronunciationSummary summary={pronunciationSummary} />
+    <WeakPointsPanel weakPoints={pronunciationWeakPoints} />
+  </div>
+</div>
+      
     </AppShell>
   );
 }

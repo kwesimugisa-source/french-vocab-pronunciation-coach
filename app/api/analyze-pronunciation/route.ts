@@ -29,7 +29,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Real transcription
     const transcript = await client.audio.transcriptions.create({
       file: audio,
       model: "gpt-4o-mini-transcribe",
@@ -37,7 +36,6 @@ export async function POST(req: Request) {
 
     const transcriptText = transcript.text?.trim() || "";
 
-    // 2) Structured pronunciation feedback
     const analysis = await client.responses.create({
       model: "gpt-5.4-mini",
       input: [
@@ -50,6 +48,12 @@ export async function POST(req: Request) {
 
 Return only valid JSON with this exact shape:
 {
+  "score": {
+    "overall": number,
+    "pronunciation": number,
+    "fluency": number,
+    "intonation": number
+  },
   "summary": {
     "overall": "string",
     "clarity": "string",
@@ -65,6 +69,16 @@ Return only valid JSON with this exact shape:
   ],
   "transcript": "string"
 }
+
+Scoring rules:
+- overall: combined reading score from 0 to 100.
+- pronunciation: word accuracy and sound clarity from 0 to 100.
+- fluency: pacing, pauses, hesitation, and smoothness from 0 to 100.
+- intonation: natural stress, expression, and sentence melody from 0 to 100.
+- Be fair but strict.
+- If the transcript is very different from the reference, lower pronunciation and overall.
+- If the reading is understandable but hesitant, lower fluency.
+- If the reading is accurate but flat/robotic, lower intonation.
 
 Rules:
 - Compare the user's transcript with the reference passage.
@@ -108,6 +122,22 @@ ${transcriptText}`,
             type: "object",
             additionalProperties: false,
             properties: {
+              score: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  overall: { type: "number" },
+                  pronunciation: { type: "number" },
+                  fluency: { type: "number" },
+                  intonation: { type: "number" },
+                },
+                required: [
+                  "overall",
+                  "pronunciation",
+                  "fluency",
+                  "intonation",
+                ],
+              },
               summary: {
                 type: "object",
                 additionalProperties: false,
@@ -137,7 +167,7 @@ ${transcriptText}`,
               },
               transcript: { type: "string" },
             },
-            required: ["summary", "weakPoints", "transcript"],
+            required: ["score", "summary", "weakPoints", "transcript"],
           },
         },
       },
@@ -147,7 +177,7 @@ ${transcriptText}`,
 
     return NextResponse.json({
       ...parsed,
-      debugVersion: "REAL-AI-ROUTE-V1",
+      debugVersion: "REAL-AI-ROUTE-V2-SCORED",
     });
   } catch (error) {
     console.error("analyze-pronunciation error:", error);
