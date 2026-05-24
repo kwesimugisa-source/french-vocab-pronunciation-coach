@@ -19,6 +19,7 @@ const contentTypes = [
   { value: "academic", label: "Academic" },
   { value: "everyday-life", label: "Everyday Life" },
   { value: "poetry", label: "Poésie" },
+  { value: "theatre", label: "Pièce de théâtre" },
 ];
 
 const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
