@@ -1,4 +1,4 @@
-import type { Props } from "./types"; // keep your existing import if different
+
 
 type Props = {
   summary: {
