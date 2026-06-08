@@ -1,3 +1,5 @@
+import type { Props } from "./types"; // keep your existing import if different
+
 type Props = {
   summary: {
     overall: string;
@@ -12,32 +14,35 @@ export default function PronunciationSummary({ summary }: Props) {
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 border-b border-slate-100 pb-4">
         <h2 className="text-xl font-semibold text-slate-900">
-          Pronunciation Summary
+          Résumé de la prononciation
         </h2>
+
         <p className="mt-1 text-sm text-slate-500">
-          This area will show a short overall reading review after analysis.
+          Cette section affichera une évaluation générale de votre lecture après l’analyse.
         </p>
       </div>
 
       <div className="rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
         {!summary ? (
           <p>
-            No pronunciation analysis yet. Record yourself and click "Analyze
-            Pronunciation" to see feedback.
+            Aucune analyse de prononciation pour le moment. Enregistrez votre lecture puis cliquez sur « Analyser la prononciation » pour obtenir une rétroaction.
           </p>
         ) : (
           <div className="space-y-2">
             <p>
-              <strong>Overall:</strong> {summary.overall}
+              <strong>Évaluation générale :</strong> {summary.overall}
             </p>
+
             <p>
-              <strong>Clarity:</strong> {summary.clarity}
+              <strong>Clarté :</strong> {summary.clarity}
             </p>
+
             <p>
-              <strong>Rhythm:</strong> {summary.rhythm}
+              <strong>Rythme :</strong> {summary.rhythm}
             </p>
+
             <p>
-              <strong>Priority:</strong> {summary.priority}
+              <strong>Priorité :</strong> {summary.priority}
             </p>
           </div>
         )}

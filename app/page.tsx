@@ -14,7 +14,7 @@ import type { ArticleData, WordInsight } from "@/lib/types";
 
 const initialArticle: ArticleData = {
   title: "Une promenade dans un quartier de Montréal",
-  source: "Demo article",
+  source: "Texte de démonstration",
   level: "B1–B2",
   text: `Le samedi matin, plusieurs habitants du quartier se rendent au marché pour acheter des produits frais. Certains prennent le temps de discuter avec les commerçants, tandis que d'autres préfèrent faire leurs courses rapidement avant de rentrer chez eux.
 
@@ -72,17 +72,17 @@ export default function Page() {
   } | null>(null);
 
   const [pronunciationScore, setPronunciationScore] = useState<{
-  overall: number;
-  pronunciation: number;
-  fluency: number;
-  intonation: number;
-} | null>(null);
+    overall: number;
+    pronunciation: number;
+    fluency: number;
+    intonation: number;
+  } | null>(null);
 
   const [pronunciationWeakPoints, setPronunciationWeakPoints] = useState<
     { word: string; note: string; severity: "low" | "medium" | "high" }[]
   >([]);
 
-const [learningWords, setLearningWords] = useState<string[]>([]);
+  const [learningWords, setLearningWords] = useState<string[]>([]);
 
   const fallbackInsight = useMemo<WordInsight | null>(() => {
     if (!selectedWordKey) return null;
@@ -127,7 +127,7 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
       });
 
       if (!response.ok) {
-        throw new Error("Failed to analyze word.");
+        throw new Error("Échec de l’analyse du mot.");
       }
 
       const data = await response.json();
@@ -152,7 +152,7 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
               tense: "—",
               mood: "—",
               conjugation: "—",
-              usage: "Analysis unavailable right now.",
+              usage: "Analyse indisponible pour le moment.",
               sentence,
               francePronunciation: "—",
               quebecPronunciation: "—",
@@ -181,21 +181,66 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-  text: article.text,
-  speed: readingSpeed,
-}),
+          text: article.text,
+          speed: readingSpeed,
+        }),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error("read-passage failed:", errorText);
-        throw new Error("Failed to generate audio.");
+        throw new Error("Échec de la génération audio.");
+      }
+
+      const contentType = response.headers.get("Content-Type") || "";
+
+      if (contentType.includes("application/json")) {
+        const data = await response.json();
+
+        if (data.mode !== "theatre" || !Array.isArray(data.clips)) {
+          throw new Error("Réponse audio de théâtre inattendue.");
+        }
+
+        for (const clip of data.clips) {
+          const binary = atob(clip.audioBase64);
+          const bytes = new Uint8Array(binary.length);
+
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+
+          const clipBlob = new Blob([bytes], { type: "audio/mpeg" });
+          const clipUrl = URL.createObjectURL(clipBlob);
+          const clipAudio = new Audio(clipUrl);
+
+          setAudio(clipAudio);
+          setAudioUrl(clipUrl);
+
+          await new Promise<void>((resolve, reject) => {
+            clipAudio.onended = () => {
+              URL.revokeObjectURL(clipUrl);
+              resolve();
+            };
+
+            clipAudio.onerror = () => {
+              URL.revokeObjectURL(clipUrl);
+              reject(new Error("Échec de la lecture du segment théâtral."));
+            };
+
+            clipAudio.play().catch(reject);
+          });
+        }
+
+        setAudio(null);
+        setAudioUrl(null);
+        setIsPlayingAudio(false);
+        return;
       }
 
       const blob = await response.blob();
 
       if (!blob.size) {
-        throw new Error("Audio response was empty.");
+        throw new Error("La réponse audio est vide.");
       }
 
       const url = URL.createObjectURL(blob);
@@ -213,7 +258,7 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
         setAudio(null);
         setAudioUrl(null);
         setIsPlayingAudio(false);
-        console.error("Audio playback error.");
+        console.error("Erreur de lecture audio.");
       };
 
       setAudio(newAudio);
@@ -223,7 +268,7 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
     } catch (error) {
       console.error(error);
       setIsPlayingAudio(false);
-      alert("Could not play AI reading.");
+      alert("Impossible de lancer la lecture IA.");
     }
   }
 
@@ -254,7 +299,7 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
       setIsRecording(true);
     } catch (error) {
       console.error(error);
-      alert("Could not access microphone.");
+      alert("Impossible d’accéder au microphone.");
     }
   }
 
@@ -265,53 +310,53 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
   }
 
   async function handleAnalyzePronunciation() {
-  try {
-    if (!recordedAudioBlob) {
-      alert("Record your reading first.");
-      return;
+    try {
+      if (!recordedAudioBlob) {
+        alert("Veuillez d’abord enregistrer votre lecture.");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("audio", recordedAudioBlob, "reading.webm");
+      formData.append("text", article.text);
+
+      const response = await fetch("/api/analyze-pronunciation", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("analyze-pronunciation failed:", errorText);
+        throw new Error("Échec de l’analyse de la prononciation.");
+      }
+
+      const data = await response.json();
+
+      console.log("Pronunciation analysis payload:", data);
+      console.log("Summary received:", data.summary);
+      console.log("Weak points received:", data.weakPoints);
+
+      setPronunciationSummary(data.summary ?? null);
+      setPronunciationScore(data.score ?? null);
+      setPronunciationWeakPoints(data.weakPoints || []);
+
+      const newWords = (data.weakPoints || []).map(
+        (item: { word: string }) => item.word
+      );
+
+      setLearningWords((prev) => {
+        const merged = [...prev, ...newWords];
+        return [...new Set(merged)];
+      });
+
+      alert("Analyse de la prononciation reçue.");
+      console.log("Transcript:", data.transcript);
+    } catch (error) {
+      console.error(error);
+      alert("Impossible d’analyser la prononciation.");
     }
-
-    const formData = new FormData();
-    formData.append("audio", recordedAudioBlob, "reading.webm");
-    formData.append("text", article.text);
-
-    const response = await fetch("/api/analyze-pronunciation", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("analyze-pronunciation failed:", errorText);
-      throw new Error("Failed to analyze pronunciation.");
-    }
-
-    const data = await response.json();
-
-    console.log("Pronunciation analysis payload:", data);
-    console.log("Summary received:", data.summary);
-    console.log("Weak points received:", data.weakPoints);
-
-    setPronunciationSummary(data.summary ?? null);
-    setPronunciationScore(data.score ?? null);
-    setPronunciationWeakPoints(data.weakPoints || []);
-
-    const newWords = (data.weakPoints || []).map(
-      (item: { word: string }) => item.word
-    );
-
-    setLearningWords((prev) => {
-      const merged = [...prev, ...newWords];
-      return [...new Set(merged)];
-    });
-
-    alert("Pronunciation analysis received.");
-    console.log("Transcript:", data.transcript);
-  } catch (error) {
-    console.error(error);
-    alert("Could not analyze pronunciation.");
   }
-}
 
   async function handleGenerateArticle() {
     try {
@@ -323,14 +368,14 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-  contentType,
-  level,
-  seed: Date.now(),
-}),
+          contentType,
+          level,
+          seed: Date.now(),
+        }),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to generate article.");
+        throw new Error("Échec de la génération du texte.");
       }
 
       const data = await response.json();
@@ -366,7 +411,7 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
       setPronunciationWeakPoints([]);
     } catch (error) {
       console.error(error);
-      alert("Could not generate article.");
+      alert("Impossible de générer le texte.");
     } finally {
       setIsGenerating(false);
     }
@@ -391,12 +436,12 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
-         <ArticleTextPanel
-  article={article}
-  selectedWord={selectedWordKey}
-  onWordClick={handleAnalyzeWord}
-  weakWords={pronunciationWeakPoints.map((item) => item.word)}
-/>
+          <ArticleTextPanel
+            article={article}
+            selectedWord={selectedWordKey}
+            onWordClick={handleAnalyzeWord}
+            weakWords={pronunciationWeakPoints.map((item) => item.word)}
+          />
         </div>
 
         <div>
@@ -413,36 +458,43 @@ const [learningWords, setLearningWords] = useState<string[]>([]);
       />
 
       <div className="mt-6 space-y-6">
-  {pronunciationScore && (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <div className="rounded-xl border bg-white p-4">
-        <div className="text-xs text-slate-500">Overall</div>
-        <div className="text-2xl font-bold">{pronunciationScore.overall}/100</div>
-      </div>
+        {pronunciationScore && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs text-slate-500">Évaluation générale</div>
+              <div className="text-2xl font-bold">
+                {pronunciationScore.overall}/100
+              </div>
+            </div>
 
-      <div className="rounded-xl border bg-white p-4">
-        <div className="text-xs text-slate-500">Pronunciation</div>
-        <div className="text-2xl font-bold">{pronunciationScore.pronunciation}/100</div>
-      </div>
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs text-slate-500">Prononciation</div>
+              <div className="text-2xl font-bold">
+                {pronunciationScore.pronunciation}/100
+              </div>
+            </div>
 
-      <div className="rounded-xl border bg-white p-4">
-        <div className="text-xs text-slate-500">Fluency</div>
-        <div className="text-2xl font-bold">{pronunciationScore.fluency}/100</div>
-      </div>
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs text-slate-500">Fluidité</div>
+              <div className="text-2xl font-bold">
+                {pronunciationScore.fluency}/100
+              </div>
+            </div>
 
-      <div className="rounded-xl border bg-white p-4">
-        <div className="text-xs text-slate-500">Intonation</div>
-        <div className="text-2xl font-bold">{pronunciationScore.intonation}/100</div>
-      </div>
-    </div>
-  )}
+            <div className="rounded-xl border bg-white p-4">
+              <div className="text-xs text-slate-500">Intonation</div>
+              <div className="text-2xl font-bold">
+                {pronunciationScore.intonation}/100
+              </div>
+            </div>
+          </div>
+        )}
 
-  <div className="grid gap-6 lg:grid-cols-2">
-    <PronunciationSummary summary={pronunciationSummary} />
-    <WeakPointsPanel weakPoints={pronunciationWeakPoints} />
-  </div>
-</div>
-      
+        <div className="grid gap-6 lg:grid-cols-2">
+          <PronunciationSummary summary={pronunciationSummary} />
+          <WeakPointsPanel weakPoints={pronunciationWeakPoints} />
+        </div>
+      </div>
     </AppShell>
   );
 }

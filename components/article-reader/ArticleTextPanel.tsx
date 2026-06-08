@@ -28,8 +28,8 @@ export default function ArticleTextPanel({
       <div className="mb-4 border-b border-slate-100 pb-4">
         <h2 className="text-xl font-semibold text-slate-900">{article.title}</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Article reading area. Click words to explore them in the side panel.
-        </p>
+  Zone de lecture. Cliquez sur un mot pour l’explorer dans le panneau latéral.
+</p>
       </div>
 
       <div className="space-y-6 text-[16px] leading-8 text-slate-700">

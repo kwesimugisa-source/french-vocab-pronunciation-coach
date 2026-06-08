@@ -62,7 +62,61 @@ Rules:
 - Keep dialogue natural, expressive, and readable for learners.
 - Do not write theatre scenes as paragraphs.
 - For generated poetry, set "source" to "Poème original généré par IA".
-- For generated theatre, set "source" to "Scène originale générée par IA".`,
+- For generated theatre, set "source" to "Scène originale générée par IA".
+- Use clearly gendered French first names for characters.
+- Prefer common names such as Nora, Sophie, Marie, Clara, Emma, Julie, Samir, Paul, Julien, Thomas, Marc, Luc, and David.
+- Stage directions must include the character name when possible, for example "(Nora soupire.)" or "(Samir regarde la porte.)".
+- Avoid overusing quiet cafés, rain, old streets, markets, parks, and waiting scenes.
+- For theatre, vary the conflict: misunderstanding, surprise visit, lost object, disagreement, secret, decision, apology, invitation, small emergency, or unexpected news.
+- For theatre, vary the setting: apartment, bus stop, library, workplace, train station, school, theatre backstage, clinic, museum, or street corner.
+- Do not always use two people waiting or talking calmly.
+- Each generated text should have a clear situation, small tension, and resolution.
+- Avoid repeatedly using lost objects, missing documents, forgotten items, mistaken identity, waiting for someone, or simple arrival/departure scenes.
+- Vary the dramatic situation significantly from one generation to the next.
+- Possible themes include:
+  - a surprise announcement
+  - a misunderstanding
+  - a difficult decision
+  - an unexpected visitor
+  - a secret revealed
+  - a workplace conflict
+  - a friendship problem
+  - a family discussion
+  - a travel problem
+  - a celebration
+  - a competition
+  - a community event
+  - a mystery
+  - a moral dilemma
+  - a humorous situation
+  - a school challenge
+  - a medical appointment
+  - a business meeting
+  - an interview
+  - a historical scene
+- Do not frequently reuse the same plot structure.
+- If content type is "tongue-twisters", generate French pronunciation exercises.
+- Generate between 5 and 10 tongue twisters.
+- Preserve line breaks.
+- Do not write paragraphs.
+- Focus on difficult French pronunciation patterns.
+- Vary sounds such as:
+  - r
+  - u / ou
+  - é / è
+  - s / ch
+  - an / en / on
+  - eu / œu
+- Match CEFR level.
+- Include a short label before each group, such as:
+  "Exercice du son R"
+  "Exercice du son CH"
+  "Exercice du son U"
+  "Exercice du son OU"
+- Do not use emoji.
+- Write labels entirely in French.
+- Set "source" to "Virelangues générés par IA".
+`,
             },
           ],
         },

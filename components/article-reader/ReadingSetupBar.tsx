@@ -12,14 +12,15 @@ type Props = {
 };
 
 const contentTypes = [
-  { value: "news", label: "News" },
+  { value: "news", label: "Actualités" },
   { value: "opinion", label: "Opinion" },
-  { value: "creative", label: "Creative" },
+  { value: "creative", label: "Créatif" },
   { value: "conversation", label: "Conversation" },
-  { value: "academic", label: "Academic" },
-  { value: "everyday-life", label: "Everyday Life" },
+  { value: "academic", label: "Académique" },
+  { value: "everyday-life", label: "Vie quotidienne" },
   { value: "poetry", label: "Poésie" },
   { value: "theatre", label: "Pièce de théâtre" },
+  { value: "tongue-twisters", label: "Virelangues" },
 ];
 
 const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -52,7 +53,7 @@ export default function ReadingSetupBar({
               htmlFor="contentType"
               className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
             >
-              Content Type
+              Type de contenu
             </label>
             <select
               id="contentType"
@@ -73,7 +74,7 @@ export default function ReadingSetupBar({
               htmlFor="level"
               className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
             >
-              Level
+              Niveau
             </label>
             <select
               id="level"
@@ -94,7 +95,7 @@ export default function ReadingSetupBar({
               htmlFor="readingSpeed"
               className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
             >
-              AI Speed
+              Vitesse de lecture IA
             </label>
             <select
               id="readingSpeed"
@@ -118,7 +119,7 @@ export default function ReadingSetupBar({
             disabled={isGenerating}
             className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isGenerating ? "Generating..." : "Generate Article"}
+           {isGenerating ? "Génération..." : "Générer un texte"}
           </button>
 
           <button
@@ -126,13 +127,13 @@ export default function ReadingSetupBar({
             onClick={onPlayAudio}
             className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
-            {isPlayingAudio ? "Stop AI Reading" : "Play AI Reading"}
+            {isPlayingAudio ? "Arrêter la lecture IA" : "Lecture la IA"}
           </button>
         </div>
       </div>
 
       <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        AI will generate a French passage based on your selected content type, level, and reading speed.
+        L’IA générera un texte en français selon le type de contenu, le niveau et la vitesse de lecture sélectionnés.
       </div>
     </section>
   );
