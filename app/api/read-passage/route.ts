@@ -9,38 +9,18 @@ type TheatreSegment = {
   text: string;
 };
 
-const FEMALE_VOICE = "nova";
-const MALE_VOICE = "onyx";
 const NARRATOR_VOICE = "shimmer";
-
-const FEMALE_NAMES = [
-  "NORA",
-  "MARIE",
-  "SOPHIE",
-  "CLARA",
-  "ANNA",
-  "EMMA",
-  "JULIE",
-];
-
-const MALE_NAMES = [
-  "SAMIR",
-  "PAUL",
-  "JULIEN",
-  "THOMAS",
-  "LUC",
-  "MARC",
-  "DAVID",
-];
+const CHORUS_VOICE = "echo";
+const CHARACTER_VOICES = ["onyx", "nova", "fable", "alloy"] as const;
 
 function detectReadingMode(text: string) {
-  const hasSpeakerLines = text
-    .split("\n")
-    .some((line) =>
-      /^\*{0,2}[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'’-]{0,30}\*{0,2}\s*[:：—–-]\s*/.test(
-        line.trim()
-      )
-    );
+  const lines = text.split("\n").map((line) => line.trim());
+
+  const dialogueLines = lines.filter((line) =>
+    /^.{1,40}?\s*[:：]\s*/.test(line)
+  );
+
+  const hasSpeakerLines = dialogueLines.length >= 2;
 
   const stanzaCount = text.split("\n\n").length;
   const lineCount = text.split("\n").filter((line) => line.trim()).length;
@@ -49,6 +29,14 @@ function detectReadingMode(text: string) {
   if (stanzaCount >= 2 && lineCount >= 6) return "poetry";
 
   return "standard";
+}
+
+function normalizeSpeakerName(name: string) {
+  return name
+    .replace(/\u00A0/g, " ")
+    .replace(/[’‘]/g, "'")
+    .trim()
+    .toUpperCase();
 }
 
 function parseTheatreSegments(text: string): TheatreSegment[] {
@@ -67,35 +55,60 @@ function parseTheatreSegments(text: string): TheatreSegment[] {
       continue;
     }
 
-    const match = line.match(
-      /^\*{0,2}([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s'’-]{0,30})\*{0,2}\s*[:：—–-]\s*(.+)$/
-    );
+    const match = line.match(/^(.{1,40}?)\s*[:：]\s*(.*)$/);
 
     if (match) {
-      segments.push({
-        type: "dialogue",
-        speaker: match[1].trim().toUpperCase(),
-        text: match[2].trim(),
-      });
+      const speaker = normalizeSpeakerName(match[1]);
+      const spokenText = match[2].trim();
+
+      if (spokenText) {
+        segments.push({
+          type: "dialogue",
+          speaker,
+          text: spokenText,
+        });
+      }
+
       continue;
     }
 
-    segments.push({
-      type: "stage",
-      speaker: "NARRATOR",
-      text: line,
-    });
+    const lastSegment = segments[segments.length - 1];
+
+    if (lastSegment && lastSegment.type === "dialogue") {
+      lastSegment.text = `${lastSegment.text} ${line}`;
+    } else {
+      segments.push({
+        type: "stage",
+        speaker: "NARRATOR",
+        text: line,
+      });
+    }
   }
 
   return segments;
 }
 
-function voiceForSpeaker(speaker: string) {
+function voiceForSpeaker(
+  speaker: string,
+  speakerVoiceMap: Record<string, string>
+) {
   if (speaker === "NARRATOR") return NARRATOR_VOICE;
-  if (FEMALE_NAMES.includes(speaker)) return FEMALE_VOICE;
-  if (MALE_NAMES.includes(speaker)) return MALE_VOICE;
 
-  return MALE_VOICE;
+  if (
+    speaker.includes("CHŒUR") ||
+    speaker.includes("CHOEUR") ||
+    speaker.includes("CHORUS")
+  ) {
+    return CHORUS_VOICE;
+  }
+
+  if (!speakerVoiceMap[speaker]) {
+    const usedCount = Object.keys(speakerVoiceMap).length;
+    speakerVoiceMap[speaker] =
+      CHARACTER_VOICES[usedCount % CHARACTER_VOICES.length];
+  }
+
+  return speakerVoiceMap[speaker];
 }
 
 async function speechToBase64({
@@ -147,19 +160,18 @@ export async function POST(req: Request) {
     const mode = detectReadingMode(text);
 
     if (mode === "theatre") {
+      const speakerVoiceMap: Record<string, string> = {};
       const segments = parseTheatreSegments(text).slice(0, 40);
 
       const clips = await Promise.all(
         segments.map(async (segment, index) => {
-          const voice = voiceForSpeaker(segment.speaker);
+          const voice = voiceForSpeaker(segment.speaker, speakerVoiceMap);
 
           const characterSpeed = Math.max(0.95, playbackSpeed);
-const narratorSpeed = Math.max(0.65, playbackSpeed - 0.15);
+          const narratorSpeed = Math.max(0.65, playbackSpeed - 0.15);
 
-const segmentSpeed =
-  segment.type === "stage"
-    ? narratorSpeed
-    : characterSpeed;
+          const segmentSpeed =
+            segment.type === "stage" ? narratorSpeed : characterSpeed;
 
           const audioBase64 = await speechToBase64({
             client,

@@ -61,6 +61,9 @@ export default function Page() {
   const [article, setArticle] = useState<ArticleData>(initialArticle);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const [showImportBox, setShowImportBox] = useState(false);
+  const [importedText, setImportedText] = useState("");
+
   const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
@@ -103,6 +106,36 @@ export default function Page() {
       quebecPronunciation: "À venir",
     };
   }, [selectedWordKey, article.text]);
+
+  function countWords(text: string) {
+    return text.trim().split(/\s+/).filter(Boolean).length;
+  }
+
+  function handleImportText() {
+    const wordCount = countWords(importedText);
+
+    if (wordCount < 50 || wordCount > 2500) {
+      alert("Le texte doit contenir entre 50 et 2 500 mots.");
+      return;
+    }
+
+    setArticle({
+      title: "Texte importé",
+      source: "Utilisateur",
+      level: "Personnalisé",
+      text: importedText.trim(),
+    });
+
+    setSelectedWord(null);
+    setSelectedWordKey(null);
+    setPronunciationSummary(null);
+    setPronunciationScore(null);
+    setPronunciationWeakPoints([]);
+    setRecordedAudioBlob(null);
+
+    setImportedText("");
+    setShowImportBox(false);
+  }
 
   async function handleAnalyzeWord(rawWord: string) {
     const cleaned = normalizeWord(rawWord);
@@ -192,9 +225,9 @@ export default function Page() {
         throw new Error("Échec de la génération audio.");
       }
 
-      const contentType = response.headers.get("Content-Type") || "";
+      const responseContentType = response.headers.get("Content-Type") || "";
 
-      if (contentType.includes("application/json")) {
+      if (responseContentType.includes("application/json")) {
         const data = await response.json();
 
         if (data.mode !== "theatre" || !Array.isArray(data.clips)) {
@@ -433,7 +466,39 @@ export default function Page() {
         readingSpeed={readingSpeed}
         onReadingSpeedChange={setReadingSpeed}
       />
+<div className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+  <button
+    type="button"
+    onClick={() => setShowImportBox((value) => !value)}
+    className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+  >
+    {showImportBox ? "Fermer l’importation" : "Importer un texte"}
+  </button>
 
+  {showImportBox && (
+    <div className="mt-4 space-y-3">
+      <textarea
+        value={importedText}
+        onChange={(e) => setImportedText(e.target.value)}
+        placeholder="Collez ici votre texte en français..."
+        className="min-h-[220px] w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-500"
+      />
+
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+        <span>{countWords(importedText)} / 2 500 mots</span>
+        <span>Minimum : 50 mots</span>
+      </div>
+
+      <button
+        type="button"
+        onClick={handleImportText}
+        className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
+      >
+        Charger le texte
+      </button>
+    </div>
+  )}
+</div>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div>
           <ArticleTextPanel
