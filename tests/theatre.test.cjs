@@ -99,11 +99,11 @@ test("30 seeded randomized completion runs preserve order and respect three work
   }
 });
 
-test("stage directions and recurring characters retain existing voices and all speeds", async () => {
+test("stage directions use dedicated narrator, characters stay consistent, and all speeds are preserved", async () => {
   const text = "(La porte s'ouvre.)\nNora: Oui.\nSamir: Non.\n(Nora attend.)\nnora: Encore.\nCHŒUR: Ensemble !";
   for (const speed of [0.7, 0.85, 1, 1.15]) {
     const response = await generateTheatreResponse(text, speed, async ({ text }) => audio(text));
-    assert.deepEqual(response.clips.map((clip) => clip.voice), ["shimmer", "onyx", "nova", "shimmer", "onyx", "echo"]);
+    assert.deepEqual(response.clips.map((clip) => clip.voice), ["cedar", "alloy", "ash", "cedar", "alloy", "echo"]);
     response.clips.forEach((clip) => assert.equal(clip.speed,
       clip.type === "stage" ? Math.max(0.65, speed - 0.15) : Math.max(0.95, speed)));
     assertCompleteTheatreResponse(response, parseTheatreItems(text));

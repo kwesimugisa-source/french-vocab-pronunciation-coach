@@ -20,6 +20,9 @@ export type TheatreClip = TheatreItem & {
 
 export type TheatreResponse = {
   mode: "theatre";
+  /** Advisory generation metadata only; never used as playback state. */
+  direction?: import("./theatre-direction").DirectionMetadata;
+  casting?: import("./theatre-casting").TheatreCasting;
   integrity: {
     version: 1;
     parsedItemCount: number;

@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
+import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
+import type { TheatreVoice } from "../../../lib/theatre-casting";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,17 +29,20 @@ async function speechToBase64({
   text,
   voice,
   speed,
+  instructions,
 }: {
   client: OpenAI;
   text: string;
-  voice: string;
+  voice: TheatreVoice;
   speed: number;
+  instructions: string;
 }) {
   const audioResponse = await client.audio.speech.create({
     model: "gpt-4o-mini-tts",
-    voice: voice as any,
+    voice,
     input: text,
     speed,
+    instructions,
   });
 
   const buffer = Buffer.from(await audioResponse.arrayBuffer());
@@ -72,7 +77,8 @@ export async function POST(req: Request) {
 
     if (mode === "theatre") {
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
-        speechToBase64({ client, ...input })
+        speechToBase64({ client, ...input }),
+        { analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens) }
       );
       return Response.json(scene);
     }
