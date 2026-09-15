@@ -1,17 +1,8 @@
 import OpenAI from "openai";
+import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type TheatreSegment = {
-  type: "dialogue" | "stage";
-  speaker: string;
-  text: string;
-};
-
-const NARRATOR_VOICE = "shimmer";
-const CHORUS_VOICE = "echo";
-const CHARACTER_VOICES = ["onyx", "nova", "fable", "alloy"] as const;
 
 function detectReadingMode(text: string) {
   const lines = text.split("\n").map((line) => line.trim());
@@ -29,86 +20,6 @@ function detectReadingMode(text: string) {
   if (stanzaCount >= 2 && lineCount >= 6) return "poetry";
 
   return "standard";
-}
-
-function normalizeSpeakerName(name: string) {
-  return name
-    .replace(/\u00A0/g, " ")
-    .replace(/[’‘]/g, "'")
-    .trim()
-    .toUpperCase();
-}
-
-function parseTheatreSegments(text: string): TheatreSegment[] {
-  const segments: TheatreSegment[] = [];
-
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-
-    if (/^\(.+\)$/.test(line)) {
-      segments.push({
-        type: "stage",
-        speaker: "NARRATOR",
-        text: line,
-      });
-      continue;
-    }
-
-    const match = line.match(/^(.{1,40}?)\s*[:：]\s*(.*)$/);
-
-    if (match) {
-      const speaker = normalizeSpeakerName(match[1]);
-      const spokenText = match[2].trim();
-
-      if (spokenText) {
-        segments.push({
-          type: "dialogue",
-          speaker,
-          text: spokenText,
-        });
-      }
-
-      continue;
-    }
-
-    const lastSegment = segments[segments.length - 1];
-
-    if (lastSegment && lastSegment.type === "dialogue") {
-      lastSegment.text = `${lastSegment.text} ${line}`;
-    } else {
-      segments.push({
-        type: "stage",
-        speaker: "NARRATOR",
-        text: line,
-      });
-    }
-  }
-
-  return segments;
-}
-
-function voiceForSpeaker(
-  speaker: string,
-  speakerVoiceMap: Record<string, string>
-) {
-  if (speaker === "NARRATOR") return NARRATOR_VOICE;
-
-  if (
-    speaker.includes("CHŒUR") ||
-    speaker.includes("CHOEUR") ||
-    speaker.includes("CHORUS")
-  ) {
-    return CHORUS_VOICE;
-  }
-
-  if (!speakerVoiceMap[speaker]) {
-    const usedCount = Object.keys(speakerVoiceMap).length;
-    speakerVoiceMap[speaker] =
-      CHARACTER_VOICES[usedCount % CHARACTER_VOICES.length];
-  }
-
-  return speakerVoiceMap[speaker];
 }
 
 async function speechToBase64({
@@ -160,44 +71,11 @@ export async function POST(req: Request) {
     const mode = detectReadingMode(text);
 
     if (mode === "theatre") {
-      const speakerVoiceMap: Record<string, string> = {};
-      const segments = parseTheatreSegments(text).slice(0, 40);
-
-      const clips = await Promise.all(
-        segments.map(async (segment, index) => {
-          const voice = voiceForSpeaker(segment.speaker, speakerVoiceMap);
-
-          const characterSpeed = Math.max(0.95, playbackSpeed);
-          const narratorSpeed = Math.max(0.65, playbackSpeed - 0.15);
-
-          const segmentSpeed =
-            segment.type === "stage" ? narratorSpeed : characterSpeed;
-
-          const audioBase64 = await speechToBase64({
-            client,
-            text: segment.text,
-            voice,
-            speed: segmentSpeed,
-          });
-
-          return {
-            index,
-            type: segment.type,
-            speaker: segment.speaker,
-            text: segment.text,
-            voice,
-            speed: segmentSpeed,
-            audioBase64,
-          };
-        })
+      const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
+        speechToBase64({ client, ...input })
       );
-
-      return Response.json({
-        mode: "theatre",
-        clips,
-      });
+      return Response.json(scene);
     }
-
     const audioResponse = await client.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
@@ -214,6 +92,18 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof TheatreGenerationError) {
+      return Response.json({
+        error: {
+          code: error.code,
+          message: error.message,
+          failedItems: error.failedItems,
+          parsedItemCount: error.parsedItemCount,
+          expectedClipCount: error.parsedItemCount,
+          generatedClipCount: error.generatedClipCount,
+        },
+      }, { status: 500 });
+    }
     console.error("read-passage error:", error);
     return new Response("Error generating audio", { status: 500 });
   }

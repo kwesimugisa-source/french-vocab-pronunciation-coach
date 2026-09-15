@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { assertCompleteTheatreResponse, parseTheatreItems } from "@/lib/theatre";
 import { getWordInsight } from "@/lib/getWordInsight";
 import ArticleHeader from "@/components/article-reader/ArticleHeader";
 import ArticleTextPanel from "@/components/article-reader/ArticleTextPanel";
@@ -230,9 +231,7 @@ export default function Page() {
       if (responseContentType.includes("application/json")) {
         const data = await response.json();
 
-        if (data.mode !== "theatre" || !Array.isArray(data.clips)) {
-          throw new Error("Réponse audio de théâtre inattendue.");
-        }
+        assertCompleteTheatreResponse(data, parseTheatreItems(article.text));
 
         for (const clip of data.clips) {
           const binary = atob(clip.audioBase64);
