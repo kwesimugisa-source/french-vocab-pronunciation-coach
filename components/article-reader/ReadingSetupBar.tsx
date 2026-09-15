@@ -4,6 +4,8 @@ type Props = {
   readingSpeed: string;
   isPlayingAudio: boolean;
   isGenerating: boolean;
+  audioLabel?: string;
+  audioDisabled?: boolean;
   onContentTypeChange: (value: string) => void;
   onLevelChange: (value: string) => void;
   onReadingSpeedChange: (value: string) => void;
@@ -38,6 +40,8 @@ export default function ReadingSetupBar({
   readingSpeed,
   isPlayingAudio,
   isGenerating,
+  audioLabel,
+  audioDisabled = false,
   onContentTypeChange,
   onLevelChange,
   onReadingSpeedChange,
@@ -125,9 +129,10 @@ export default function ReadingSetupBar({
           <button
             type="button"
             onClick={onPlayAudio}
+            disabled={audioDisabled}
             className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
-            {isPlayingAudio ? "Arrêter la lecture IA" : "Lecture la IA"}
+            {audioLabel ?? (isPlayingAudio ? "Arrêter la lecture IA" : "Lecture la IA")}
           </button>
         </div>
       </div>

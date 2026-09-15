@@ -1,6 +1,11 @@
 type Props = {
   isRecording: boolean;
   hasRecording: boolean;
+  isBusy?: boolean;
+  isAnalyzing?: boolean;
+  targetLabel?: string;
+  statusMessage?: string;
+  error?: string | null;
   onStartReading: () => void;
   onStopReading: () => void;
   onAnalyzePronunciation: () => void;
@@ -9,17 +14,23 @@ type Props = {
 export default function ReadingControls({
   isRecording,
   hasRecording,
+  isBusy = false,
+  isAnalyzing = false,
+  targetLabel,
+  statusMessage,
+  error,
   onStartReading,
   onStopReading,
   onAnalyzePronunciation,
 }: Props) {
   return (
     <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      {targetLabel && <p className="mb-3 text-sm font-medium">{targetLabel}</p>}
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={onStartReading}
-          disabled={isRecording}
+          disabled={isRecording || isBusy}
           className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isRecording ? "Enregistrement..." : "Commencer la lecture"}
@@ -37,20 +48,21 @@ export default function ReadingControls({
         <button
           type="button"
           onClick={onAnalyzePronunciation}
-          disabled={!hasRecording}
+          disabled={!hasRecording || isBusy}
           className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Analyser la prononciation
+          {isAnalyzing ? "Analyse en cours…" : "Analyser la prononciation"}
         </button>
       </div>
 
       <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        {isRecording
+        {statusMessage ?? (isRecording
           ? "Le microphone enregistre votre lecture."
           : hasRecording
           ? "Enregistrement terminé et prêt pour l’analyse."
-          : "Cliquez sur « Commencer la lecture » pour enregistrer votre lecture à voix haute."}
+          : "Cliquez sur « Commencer la lecture » pour enregistrer votre lecture à voix haute.")}
       </div>
+      {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     </section>
   );
 }

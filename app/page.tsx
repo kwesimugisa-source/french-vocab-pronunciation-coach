@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { assertCompleteTheatreResponse, parseTheatreItems } from "@/lib/theatre";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ReadingPlaybackSession } from "@/lib/reading-playback";
+import { PronunciationSession } from "@/lib/pronunciation-session";
 import { getWordInsight } from "@/lib/getWordInsight";
 import ArticleHeader from "@/components/article-reader/ArticleHeader";
 import ArticleTextPanel from "@/components/article-reader/ArticleTextPanel";
 import ReadingControls from "@/components/article-reader/ReadingControls";
 import ReadingSetupBar from "@/components/article-reader/ReadingSetupBar";
+import TheatreControls from "@/components/article-reader/TheatreControls";
 import AppShell from "@/components/layout/AppShell";
 import PronunciationSummary from "@/components/pronunciation/PronunciationSummary";
 import WeakPointsPanel from "@/components/pronunciation/WeakPointsPanel";
@@ -50,13 +52,16 @@ export default function Page() {
   const [selectedWord, setSelectedWord] = useState<WordInsight | null>(null);
   const [selectedWordKey, setSelectedWordKey] = useState<string | null>(null);
 
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const [playback] = useState(() => new ReadingPlaybackSession());
+  const [pronunciation] = useState(() => new PronunciationSession());
+  const playbackState = useSyncExternalStore(playback.subscribe, playback.getSnapshot, playback.getSnapshot);
+  const pronunciationState = useSyncExternalStore(pronunciation.subscribe, pronunciation.getSnapshot, pronunciation.getSnapshot);
+  const articleRequest = useRef<AbortController | null>(null);
+  const isRecording = pronunciationState.status === "recording";
+  const recordingBusy = pronunciation.isBusy();
 
   const [contentType, setContentType] = useState("news");
   const [level, setLevel] = useState("B1");
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [readingSpeed, setReadingSpeed] = useState("normal");
 
   const [article, setArticle] = useState<ArticleData>(initialArticle);
@@ -64,9 +69,6 @@ export default function Page() {
 
   const [showImportBox, setShowImportBox] = useState(false);
   const [importedText, setImportedText] = useState("");
-
-  const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const [pronunciationSummary, setPronunciationSummary] = useState<{
     overall: string;
@@ -88,6 +90,24 @@ export default function Page() {
 
   const [learningWords, setLearningWords] = useState<string[]>([]);
 
+  useEffect(() => () => {
+    articleRequest.current?.abort();
+    playback.stop();
+    pronunciation.reset();
+  }, [playback, pronunciation]);
+
+  useEffect(() => {
+    const feedback = pronunciationState.feedback;
+    setPronunciationSummary(feedback?.summary ?? null);
+    setPronunciationScore(feedback?.score ?? null);
+    setPronunciationWeakPoints(feedback?.weakPoints ?? []);
+    if (feedback) {
+      setLearningWords((previous) => [...new Set([...previous, ...feedback.weakPoints.map((item) => item.word)])]);
+    }
+  }, [pronunciationState.feedback]);
+
+  const analysisText = playbackState.theatre.practiceTarget?.text ?? article.text;
+
   const fallbackInsight = useMemo<WordInsight | null>(() => {
     if (!selectedWordKey) return null;
 
@@ -102,11 +122,11 @@ export default function Page() {
       conjugation: "À analyser",
       usage:
         "Aucune fiche locale pour ce mot pour l'instant. Plus tard, cette zone sera remplie par l'analyse AI.",
-      sentence: findSentenceForWord(article.text, selectedWordKey) || "—",
+      sentence: findSentenceForWord(analysisText, selectedWordKey) || "—",
       francePronunciation: "À venir",
       quebecPronunciation: "À venir",
     };
-  }, [selectedWordKey, article.text]);
+  }, [selectedWordKey, analysisText]);
 
   function countWords(text: string) {
     return text.trim().split(/\s+/).filter(Boolean).length;
@@ -120,6 +140,11 @@ export default function Page() {
       return;
     }
 
+    articleRequest.current?.abort();
+    articleRequest.current = null;
+    setIsGenerating(false);
+    playback.stop();
+    pronunciation.reset();
     setArticle({
       title: "Texte importé",
       source: "Utilisateur",
@@ -132,7 +157,6 @@ export default function Page() {
     setPronunciationSummary(null);
     setPronunciationScore(null);
     setPronunciationWeakPoints([]);
-    setRecordedAudioBlob(null);
 
     setImportedText("");
     setShowImportBox(false);
@@ -142,7 +166,7 @@ export default function Page() {
     const cleaned = normalizeWord(rawWord);
     if (!cleaned) return;
 
-    const sentence = findSentenceForWord(article.text, cleaned) || "—";
+    const sentence = findSentenceForWord(analysisText, cleaned) || "—";
 
     setSelectedWordKey(cleaned);
 
@@ -195,206 +219,64 @@ export default function Page() {
     }
   }
 
-  async function handlePlayAudio() {
-    try {
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-        if (audioUrl) URL.revokeObjectURL(audioUrl);
-        setAudio(null);
-        setAudioUrl(null);
-        setIsPlayingAudio(false);
-        return;
-      }
+  function handleStopPlayback() {
+    playback.stop();
+    pronunciation.reset();
+  }
 
-      setIsPlayingAudio(true);
-
-      const response = await fetch("/api/read-passage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: article.text,
-          speed: readingSpeed,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("read-passage failed:", errorText);
-        throw new Error("Échec de la génération audio.");
-      }
-
-      const responseContentType = response.headers.get("Content-Type") || "";
-
-      if (responseContentType.includes("application/json")) {
-        const data = await response.json();
-
-        assertCompleteTheatreResponse(data, parseTheatreItems(article.text));
-
-        for (const clip of data.clips) {
-          const binary = atob(clip.audioBase64);
-          const bytes = new Uint8Array(binary.length);
-
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i);
-          }
-
-          const clipBlob = new Blob([bytes], { type: "audio/mpeg" });
-          const clipUrl = URL.createObjectURL(clipBlob);
-          const clipAudio = new Audio(clipUrl);
-
-          setAudio(clipAudio);
-          setAudioUrl(clipUrl);
-
-          await new Promise<void>((resolve, reject) => {
-            clipAudio.onended = () => {
-              URL.revokeObjectURL(clipUrl);
-              resolve();
-            };
-
-            clipAudio.onerror = () => {
-              URL.revokeObjectURL(clipUrl);
-              reject(new Error("Échec de la lecture du segment théâtral."));
-            };
-
-            clipAudio.play().catch(reject);
-          });
-        }
-
-        setAudio(null);
-        setAudioUrl(null);
-        setIsPlayingAudio(false);
-        return;
-      }
-
-      const blob = await response.blob();
-
-      if (!blob.size) {
-        throw new Error("La réponse audio est vide.");
-      }
-
-      const url = URL.createObjectURL(blob);
-      const newAudio = new Audio(url);
-
-      newAudio.onended = () => {
-        URL.revokeObjectURL(url);
-        setAudio(null);
-        setAudioUrl(null);
-        setIsPlayingAudio(false);
-      };
-
-      newAudio.onerror = () => {
-        URL.revokeObjectURL(url);
-        setAudio(null);
-        setAudioUrl(null);
-        setIsPlayingAudio(false);
-        console.error("Erreur de lecture audio.");
-      };
-
-      setAudio(newAudio);
-      setAudioUrl(url);
-
-      await newAudio.play();
-    } catch (error) {
-      console.error(error);
-      setIsPlayingAudio(false);
-      alert("Impossible de lancer la lecture IA.");
+  function handlePlayAudio() {
+    if (pronunciation.isBusy()) return;
+    if (playback.getSnapshot().busy) handleStopPlayback();
+    else {
+      pronunciation.reset();
+      void playback.start(article.text, readingSpeed);
     }
   }
 
-  async function handleStartReading() {
-    try {
-      if (isRecording) return;
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const chunks: BlobPart[] = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        setRecordedAudioBlob(blob);
-        setIsRecording(false);
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      recorder.start();
-      setRecordedAudioBlob(null);
-      setMediaRecorder(recorder);
-      setIsRecording(true);
-    } catch (error) {
-      console.error(error);
-      alert("Impossible d’accéder au microphone.");
+  function handlePractise(itemId: string) {
+    if (pronunciation.isBusy()) return;
+    if (playback.theatre.enterPractice(itemId)) {
+      pronunciation.reset();
+      setSelectedWord(null);
+      setSelectedWordKey(null);
     }
   }
 
-  function handleStopReading() {
-    if (!mediaRecorder || !isRecording) return;
-    mediaRecorder.stop();
-    setMediaRecorder(null);
+  function handleFinishPractice() {
+    if (pronunciation.isBusy()) return;
+    pronunciation.reset();
+    playback.theatre.finishPractice();
+    setSelectedWord(null);
+    setSelectedWordKey(null);
   }
 
-  async function handleAnalyzePronunciation() {
-    try {
-      if (!recordedAudioBlob) {
-        alert("Veuillez d’abord enregistrer votre lecture.");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append("audio", recordedAudioBlob, "reading.webm");
-      formData.append("text", article.text);
-
-      const response = await fetch("/api/analyze-pronunciation", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("analyze-pronunciation failed:", errorText);
-        throw new Error("Échec de l’analyse de la prononciation.");
-      }
-
-      const data = await response.json();
-
-      console.log("Pronunciation analysis payload:", data);
-      console.log("Summary received:", data.summary);
-      console.log("Weak points received:", data.weakPoints);
-
-      setPronunciationSummary(data.summary ?? null);
-      setPronunciationScore(data.score ?? null);
-      setPronunciationWeakPoints(data.weakPoints || []);
-
-      const newWords = (data.weakPoints || []).map(
-        (item: { word: string }) => item.word
-      );
-
-      setLearningWords((prev) => {
-        const merged = [...prev, ...newWords];
-        return [...new Set(merged)];
-      });
-
-      alert("Analyse de la prononciation reçue.");
-      console.log("Transcript:", data.transcript);
-    } catch (error) {
-      console.error(error);
-      alert("Impossible d’analyser la prononciation.");
-    }
+  function handleReplay() {
+    if (!pronunciation.isBusy()) playback.theatre.replay();
   }
 
+  function handleStartReading() {
+    if (pronunciation.isBusy()) return;
+    const target = playback.theatre.getSnapshot().practiceTarget;
+    playback.theatre.pause();
+    void pronunciation.start(target ? {
+      text: target.text, itemId: target.itemId,
+      speaker: target.speaker, sessionId: target.sessionId,
+    } : { text: article.text });
+  }
+
+  function handleStopReading() { pronunciation.stop(); }
+  function handleAnalyzePronunciation() { void pronunciation.analyze(); }
   async function handleGenerateArticle() {
+    articleRequest.current?.abort();
+    const request = new AbortController();
+    articleRequest.current = request;
+    playback.stop();
+    pronunciation.reset();
     try {
       setIsGenerating(true);
 
       const response = await fetch("/api/generate-article", {
+        signal: request.signal,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -412,22 +294,9 @@ export default function Page() {
 
       const data = await response.json();
 
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-      }
-
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-
-      setAudio(null);
-      setAudioUrl(null);
-      setIsPlayingAudio(false);
-
-      setRecordedAudioBlob(null);
-      setIsRecording(false);
-      setMediaRecorder(null);
+      if (articleRequest.current !== request || request.signal.aborted) return;
+      playback.stop();
+      pronunciation.reset();
 
       setArticle({
         title: data.title,
@@ -443,9 +312,12 @@ export default function Page() {
       setPronunciationWeakPoints([]);
     } catch (error) {
       console.error(error);
-      alert("Impossible de générer le texte.");
+      if (!request.signal.aborted) alert("Impossible de générer le texte.");
     } finally {
-      setIsGenerating(false);
+      if (articleRequest.current === request) {
+        articleRequest.current = null;
+        setIsGenerating(false);
+      }
     }
   }
 
@@ -456,7 +328,9 @@ export default function Page() {
       <ReadingSetupBar
         contentType={contentType}
         level={level}
-        isPlayingAudio={isPlayingAudio}
+        isPlayingAudio={playbackState.busy}
+        audioLabel={playbackState.mode === "pending" && playbackState.busy ? "Annuler la préparation audio" : undefined}
+        audioDisabled={recordingBusy || isGenerating}
         isGenerating={isGenerating}
         onContentTypeChange={setContentType}
         onLevelChange={setLevel}
@@ -465,6 +339,17 @@ export default function Page() {
         readingSpeed={readingSpeed}
         onReadingSpeedChange={setReadingSpeed}
       />
+      {playbackState.error && <p role="alert" className="mb-4 text-sm text-red-700">{playbackState.error}</p>}
+      {playbackState.mode === "theatre" && <TheatreControls
+        playback={playbackState.theatre}
+        recordingBusy={recordingBusy}
+        onPause={() => playback.theatre.pause()}
+        onResume={() => { if (!pronunciation.isBusy()) playback.theatre.resume(); }}
+        onReplay={handleReplay}
+        onStop={handleStopPlayback}
+        onPractise={handlePractise}
+        onFinishPractice={handleFinishPractice}
+      />}
 <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
   <button
     type="button"
@@ -515,7 +400,18 @@ export default function Page() {
 
       <ReadingControls
         isRecording={isRecording}
-        hasRecording={!!recordedAudioBlob}
+        hasRecording={!!pronunciationState.recording}
+        isBusy={recordingBusy}
+        isAnalyzing={pronunciationState.status === "analyzing"}
+        targetLabel={playbackState.theatre.practiceTarget
+          ? `Pratique — ${playbackState.theatre.practiceTarget.speaker}, réplique ${playbackState.theatre.practiceTarget.index + 1}`
+          : undefined}
+        statusMessage={pronunciationState.status === "requesting-microphone" ? "Autorisation du microphone en attente…"
+          : pronunciationState.status === "stopping" ? "Finalisation de l’enregistrement…"
+          : pronunciationState.status === "analyzing" ? "Analyse de votre enregistrement…"
+          : pronunciationState.status === "analyzed" ? "Analyse terminée. Vous pouvez enregistrer un nouvel essai."
+          : undefined}
+        error={pronunciationState.error}
         onStartReading={handleStartReading}
         onStopReading={handleStopReading}
         onAnalyzePronunciation={handleAnalyzePronunciation}
