@@ -118,7 +118,11 @@ export class ReadingPlaybackSession {
           if (!current()) return;
           this.theatre.acceptScene(sessionId, data, text);
           const scene = data as TheatreResponse;
-          const recommendation = validateAmbience({ ...scene.ambience, confidence: "high" }, scene.clips);
+          // Only CP4's sanitized legacy shape omitted confidence. New scene
+          // reasoning must carry its own validated confidence, never invent it.
+          const ambience = scene.ambience;
+          const recommendation = validateAmbience(ambience && Object.hasOwn(ambience, "basis") ? ambience :
+            { ...ambience, confidence: ambience?.confidence ?? "high" }, scene.clips);
           this.ambience.configure(recommendation.environment);
           this.update({ mode: "theatre", ambience: { ...this.snapshot.ambience, environment: recommendation.environment } });
         } else {

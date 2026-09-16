@@ -31,6 +31,29 @@ const request = (text, speed = "normal") => new Request("http://localhost/api/re
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, speed }),
 });
 
+test("real import route detects theatre and carries contextual office evidence and both chorus groups to the client", async () => {
+  const { source: text } = require("./chorus-import-fixture.cjs");
+  const expected = parseTheatreItems(text);
+  const { post, speechCalls, analysisCalls } = routeWith(async body => {
+    const items = JSON.parse(body.input[1].content).items;
+    return { status: "completed", output_text: JSON.stringify({ ...analysisFor(items), ambience: {
+      environment: "office", confidence: "high", basis: "contextual", contradictory: false,
+      evidence: items.slice(0, 3).map(i => ({ itemId: i.id, quote: i.text })),
+      rationale: "An employment registration service handles a numbered client and paperwork.",
+    } }) };
+  });
+  const response = await post(request(text));
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.mode, "theatre"); assert.equal(data.ambience.environment, "office");
+  assert.equal(analysisCalls.length, 1);
+  assert.deepEqual(JSON.parse(analysisCalls[0].body.input[1].content).items, expected);
+  assert.match(analysisCalls[0].body.input[0].content, /WHOLE scene/);
+  assert.equal(data.clips.length, 7); assert.equal(speechCalls.length, 11);
+  assert.deepEqual(data.clips.filter(c => c.chorus).map(c => [c.id, c.chorus.components.length]), [["line-12", 3], ["line-21", 3]]);
+  assert.ok(speechCalls.every(c => c.analysesCompleted === 1));
+});
+
 test("route sends supported instructions separately from exact text, with correct cast, IDs and speed", async () => {
   const text = "(La porte s’ouvre.)\nNORA: Bonjour…\nNous sommes ici.\nSAMIR: Enfin !\nCHŒUR: Ensemble !";
   const expected = parseTheatreItems(text), { post, analysisCalls, speechCalls } = routeWith();

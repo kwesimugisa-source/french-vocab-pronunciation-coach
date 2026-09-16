@@ -2,6 +2,7 @@ import { canPractise } from "@/lib/theatre-playback";
 import type { TheatrePlaybackSnapshot } from "@/lib/theatre-playback";
 import type { AmbienceLevel } from "@/lib/ambience-playback";
 import type { AmbienceKind } from "@/lib/theatre-ambience";
+import { ambienceDescription, hasLocalAmbienceProvider } from "@/lib/theatre-ambience";
 
 type Props = {
   ambience?: { environment: AmbienceKind; level: AmbienceLevel };
@@ -32,11 +33,11 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
       {ambience && <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
         <label htmlFor="theatre-ambience">Ambiance</label>
         <select id="theatre-ambience" className="rounded-xl border border-slate-300 bg-white p-2"
-          value={ambience.level} disabled={ambience.environment === "none"}
+          value={ambience.level} disabled={!hasLocalAmbienceProvider(ambience.environment)}
           onChange={(event) => onAmbienceChange?.(event.target.value as AmbienceLevel)}>
           <option value="off">Désactivée</option><option value="low">Faible</option><option value="medium">Modérée</option>
         </select>
-        <span className="text-slate-600">{ambience.environment === "rain" ? "Pluie douce — suspendue pendant l’enregistrement." : "Aucune ambiance adaptée détectée."}</span>
+        <span className="text-slate-600">{ambienceDescription(ambience.environment)}</span>
       </div>}
       <p role="status" className="mt-1 text-sm text-slate-600">
         {labels[playback.status]}{current ? ` — élément ${playback.currentIndex + 1} sur ${playback.queue.length}` : ""}

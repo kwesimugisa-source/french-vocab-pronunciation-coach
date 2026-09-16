@@ -1,3 +1,5 @@
+import { isChorusSpeaker, speakerIdentity } from "./theatre-speakers";
+
 /** A dialogue turn is one logical item, even when it spans physical lines.
  * IDs are scene-local and deterministic for unchanged source text. They are not
  * persistent edit-tracking IDs: scope selections to their original scene.
@@ -36,14 +38,11 @@ export type TheatreResponse = {
   clips: TheatreClip[];
 };
 
-function normalizeSpeakerName(name: string) {
-  return name.replace(/\u00A0/g, " ").replace(/[’‘]/g, "'").trim().toUpperCase();
-}
-
 /** Preserve the existing theatre grammar and continuation-line behavior. */
 export function parseTheatreItems(text: string): TheatreItem[] {
   const items: TheatreItem[] = [];
   const lines = text.split("\n");
+  let pendingSpeaker: string | null = null;
 
   function append(type: TheatreItem["type"], speaker: string, text: string, sourceLine: number) {
     items.push({
@@ -69,7 +68,24 @@ export function parseTheatreItems(text: string): TheatreItem[] {
     const match = line.match(/^(.{1,40}?)\s*[:：]\s*(.*)$/);
     if (match) {
       const spokenText = match[2].trim();
-      if (spokenText) append("dialogue", normalizeSpeakerName(match[1]), spokenText, sourceLine);
+      pendingSpeaker = speakerIdentity(match[1]);
+      if (spokenText) {
+        append("dialogue", pendingSpeaker, spokenText, sourceLine);
+        pendingSpeaker = null;
+      }
+      return;
+    }
+
+    if (pendingSpeaker !== null) {
+      append("dialogue", pendingSpeaker, line, sourceLine);
+      pendingSpeaker = null;
+      return;
+    }
+
+    // Isolated numeric content is ambiguous: preserve it as a spoken item,
+    // rather than deleting possible dialogue or appending pagination to a turn.
+    if (/^\d+$/.test(line) && !lines[offset - 1]?.trim() && !lines[offset + 1]?.trim()) {
+      append("stage", "NARRATOR", line, sourceLine);
       return;
     }
 
@@ -122,7 +138,7 @@ export function assertCompleteTheatreResponse(
     ) invalid();
     if (clip.chorus !== undefined) {
       const parts = clip.chorus?.components;
-      if (item.type !== "dialogue" || !["CHŒUR", "CHOEUR", "CHORUS"].some((name) => item.speaker.includes(name)) ||
+      if (item.type !== "dialogue" || !isChorusSpeaker(item.speaker) ||
         !Array.isArray(parts) || parts.length !== 3 || new Set(parts.map((part) => part?.voice)).size !== 3 ||
         parts.some((part) => !part || typeof part.voice !== "string" || !part.voice ||
           typeof part.audioBase64 !== "string" || !part.audioBase64.trim()) ||

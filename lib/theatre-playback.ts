@@ -1,6 +1,7 @@
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip } from "./theatre";
 import { ChorusAudio } from "./chorus-audio";
+import { isChorusSpeaker } from "./theatre-speakers";
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
 export type PracticeTarget = {
@@ -67,7 +68,7 @@ const initialSnapshot = (sessionId: number): TheatrePlaybackSnapshot => ({
 });
 
 export function canPractise(clip: TheatreClip): boolean {
-  return clip.type === "dialogue" && !["CHŒUR", "CHOEUR", "CHORUS"].some((name) => clip.speaker.includes(name));
+  return clip.type === "dialogue" && !isChorusSpeaker(clip.speaker);
 }
 
 /** Session-owned, event-driven playback. No suspended per-clip promise loops. */

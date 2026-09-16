@@ -1,4 +1,5 @@
 import type { TheatreItem } from "./theatre";
+import { isChorusSpeaker } from "./theatre-speakers";
 
 // Built-in gpt-4o-mini-tts inventory, verified against SDK 6.34.0 and the
 // official speech guide. Do not infer vocal gender or aliases from names.
@@ -24,8 +25,7 @@ export const CHORUS_VOICE: TheatreVoice = "echo";
 
 export function theatreRole(item: TheatreItem): TheatreRole {
   if (item.type === "stage") return "narrator";
-  // Preserve the Checkpoint 2 chorus recognition rule.
-  return ["CHŒUR", "CHOEUR", "CHORUS"].some((name) => item.speaker.includes(name))
+  return isChorusSpeaker(item.speaker)
     ? "chorus" : "character";
 }
 

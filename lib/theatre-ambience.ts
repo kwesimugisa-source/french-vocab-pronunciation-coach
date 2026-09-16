@@ -1,23 +1,68 @@
 import type { TheatreItem } from "./theatre";
 
-export type AmbienceKind = "none" | "rain";
-export type AmbienceRecommendation = { environment: AmbienceKind; evidenceItemId: string; evidenceQuote: string };
+export const AMBIENCE_CATALOGUE = {
+  none: "Aucune", neutral_room: "Pièce calme", office: "Bureau", cafe: "Café",
+  classroom: "Salle de classe", kitchen: "Cuisine", fireplace: "Cheminée",
+  rain: "Pluie douce", thunderstorm: "Orage", wind: "Vent", forest: "Forêt",
+  garden_birds: "Jardin et oiseaux", seaside: "Bord de mer", night_insects: "Insectes nocturnes",
+  street: "Rue", traffic: "Circulation", market: "Marché", station: "Gare",
+  crowd: "Foule", theatre_auditorium: "Salle de théâtre", tavern: "Taverne",
+  ballroom: "Salle de bal", church: "Église", distant_battlefield: "Champ de bataille lointain",
+  harbour_ship: "Port ou navire", rural_village: "Village rural",
+} as const;
+export type AmbienceKind = keyof typeof AMBIENCE_CATALOGUE;
+type Evidence = { itemId: string; quote: string };
+export type AmbienceRecommendation = {
+  environment: AmbienceKind; evidenceItemId?: string; evidenceQuote?: string;
+  confidence?: "high" | "uncertain"; basis?: "explicit" | "contextual";
+  evidence?: Evidence[]; rationale?: string; contradictory?: boolean;
+};
 export const noAmbience = (): AmbienceRecommendation => ({ environment: "none", evidenceItemId: "", evidenceQuote: "" });
 export const AMBIENCE_SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["environment", "confidence", "evidenceItemId", "evidenceQuote"],
+  required: ["environment", "confidence", "basis", "evidence", "rationale", "contradictory"],
   properties: {
-    environment: { type: "string", enum: ["none", "rain"] },
+    environment: { type: "string", enum: Object.keys(AMBIENCE_CATALOGUE) },
     confidence: { type: "string", enum: ["high", "uncertain"] },
-    evidenceItemId: { type: "string" }, evidenceQuote: { type: "string" },
+    basis: { type: "string", enum: ["explicit", "contextual"] },
+    evidence: { type: "array", maxItems: 6, items: { type: "object", additionalProperties: false,
+      required: ["itemId", "quote"], properties: { itemId: { type: "string" }, quote: { type: "string", minLength: 1, maxLength: 400 } } } },
+    rationale: { type: "string", maxLength: 400 }, contradictory: { type: "boolean" },
   },
 };
 
-/** Intentionally narrow: only explicit present rain in a stage direction.
- * Unsupported, ambiguous, speculative or negated environments remain silent. */
+/** Validate evidence identity and structure independently from dramatic direction.
+ * Whole-scene semantic reasoning belongs to the analyzer; invalid evidence,
+ * uncertainty or reported contradictions cannot enable an ambience provider. */
 export function validateAmbience(value: unknown, items: readonly TheatreItem[]): AmbienceRecommendation {
   if (!value || typeof value !== "object") return noAmbience();
   const data = value as Record<string, unknown>;
+  if (Object.hasOwn(data, "basis")) {
+    const keys = ["environment", "confidence", "basis", "evidence", "rationale", "contradictory"];
+    if (Object.keys(data).length !== keys.length || !keys.every(key => Object.hasOwn(data, key)) ||
+      typeof data.environment !== "string" || !Object.hasOwn(AMBIENCE_CATALOGUE, data.environment) ||
+      data.environment === "none" || data.confidence !== "high" || data.contradictory !== false ||
+      !["explicit", "contextual"].includes(data.basis as string) ||
+      typeof data.rationale !== "string" || !data.rationale.trim() || data.rationale.length > 400 ||
+      !Array.isArray(data.evidence) || !data.evidence.length || data.evidence.length > 6) return noAmbience();
+    const evidence: Evidence[] = [];
+    for (const entry of data.evidence) {
+      if (!entry || typeof entry !== "object" || Object.keys(entry).length !== 2 ||
+        typeof entry.itemId !== "string" || typeof entry.quote !== "string" ||
+        !entry.quote.trim() || entry.quote.length > 400) return noAmbience();
+      const item = items.find(item => item.id === entry.itemId);
+      if (!item || !item.text.includes(entry.quote) || evidence.some(e => e.itemId === entry.itemId)) return noAmbience();
+      evidence.push({ itemId: entry.itemId, quote: entry.quote });
+    }
+    // Explicit evidence must include narration; contextual inference requires
+    // corroboration across distinct items. Semantic assessment is the whole-scene
+    // analyzer's job, not a keyword classifier disguised as scene understanding.
+    if (data.basis === "explicit" && !evidence.some(e => items.find(i => i.id === e.itemId)?.type === "stage") ||
+      data.basis === "contextual" && evidence.length < 2) return noAmbience();
+    return { environment: data.environment as AmbienceKind, confidence: "high", basis: data.basis as "explicit" | "contextual",
+      evidence, rationale: data.rationale, contradictory: false };
+  }
+  // Read-only compatibility with CP4's narrowly validated rain contract.
   if (Object.keys(data).length !== 4 || data.environment !== "rain" || data.confidence !== "high" ||
     typeof data.evidenceItemId !== "string" || typeof data.evidenceQuote !== "string" ||
     !data.evidenceQuote || data.evidenceQuote.length > 400) return noAmbience();
@@ -31,8 +76,7 @@ export function validateAmbience(value: unknown, items: readonly TheatreItem[]):
 export type AmbienceProvider = (kind: AmbienceKind) => Blob | null;
 /** Original procedural demonstration, no external recordings/licensing or API.
  * A quiet filtered noise bed, not a realistic production sound library. */
-export const localAmbienceProvider: AmbienceProvider = (kind) => {
-  if (kind !== "rain") return null;
+function localNoise(kind: "rain" | "room"): Blob {
   const rate = 16000, samples = rate * 4;
   const bytes = new Uint8Array(44 + samples * 2), view = new DataView(bytes.buffer);
   const label = (offset: number, text: string) => [...text].forEach((c, i) => { bytes[offset + i] = c.charCodeAt(0); });
@@ -45,7 +89,20 @@ export const localAmbienceProvider: AmbienceProvider = (kind) => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     smooth = smooth * 0.65 + (seed / 0xffffffff * 2 - 1) * 0.35;
     const fade = Math.min(1, i / 800, (samples - 1 - i) / 800);
-    view.setInt16(44 + i * 2, Math.round(smooth * 7000 * fade), true);
+    const sample = kind === "rain" ? smooth * 7000 : smooth * 900 + Math.sin(i * 2 * Math.PI * 100 / rate) * 180;
+    view.setInt16(44 + i * 2, Math.round(sample * fade), true);
   }
   return new Blob([bytes], { type: "audio/wav" });
+}
+// Only appropriate base beds. No phones, speech, printers or one-shot effects.
+const localProviders: Partial<Record<AmbienceKind, () => Blob>> = {
+  rain: () => localNoise("rain"), neutral_room: () => localNoise("room"), office: () => localNoise("room"),
 };
+export const hasLocalAmbienceProvider = (kind: AmbienceKind): boolean => Object.hasOwn(localProviders, kind);
+export const localAmbienceProvider: AmbienceProvider = kind => hasLocalAmbienceProvider(kind) ? localProviders[kind]!() : null;
+export function ambienceDescription(kind: AmbienceKind): string {
+  if (kind === "none") return "Aucune ambiance adaptée détectée.";
+  return `${AMBIENCE_CATALOGUE[kind]} — ${hasLocalAmbienceProvider(kind)
+    ? "ambiance de démonstration, suspendue pendant l’enregistrement."
+    : "environnement identifié ; aucun son disponible."}`;
+}
