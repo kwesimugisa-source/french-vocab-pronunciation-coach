@@ -12,7 +12,7 @@ export type CastMember = { speaker: string; role: TheatreRole; voice: TheatreVoi
 export type TheatreCasting = {
   version: 1;
   narrator: { voice: TheatreVoice };
-  chorus: { voice: TheatreVoice };
+  chorus: { voice: TheatreVoice; voices: TheatreVoice[] };
   members: CastMember[];
   reusedCharacterVoices: boolean;
 };
@@ -39,7 +39,8 @@ export function createTheatreCasting(
   const characters = [...new Set(items.filter((item) => theatreRole(item) === "character").map((item) => item.speaker))].sort();
   const chorus = [...new Set(items.filter((item) => theatreRole(item) === "chorus").map((item) => item.speaker))].sort();
   return {
-    version: 1, narrator: { voice: narratorVoice }, chorus: { voice: CHORUS_VOICE },
+    version: 1, narrator: { voice: narratorVoice },
+    chorus: { voice: CHORUS_VOICE, voices: (["echo", "fable", "onyx", "ash"] as TheatreVoice[]).filter((voice) => voice !== narratorVoice).slice(0, 3) },
     reusedCharacterVoices: characters.length > pool.length,
     members: [
       ...(items.some((item) => item.type === "stage")

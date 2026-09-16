@@ -158,7 +158,7 @@ test("exact Unicode, punctuation, multiline text, speaker identity and source li
     },
   });
   assert.equal(JSON.stringify(expected), before);
-  assert.deepEqual(calls.map((c) => c.text), expected.map((i) => i.text));
+  assert.deepEqual(calls.map((c) => c.text), expected.flatMap((i) => i.speaker === "CHŒUR" ? [i.text, i.text, i.text] : [i.text]));
   assert.deepEqual(response.clips.map((c) => c.sourceLines), expected.map((i) => i.sourceLines));
   assertCompleteTheatreResponse(response, expected);
   assert.match(calls[0].instructions, /lower, composed register/);

@@ -4,6 +4,7 @@ import { createTheatreCasting, theatreRole } from "./theatre-casting";
 import type { TheatreVoice } from "./theatre-casting";
 import { dramaticInstructions, prepareDramaticDirection } from "./theatre-direction";
 import type { SceneAnalyzer } from "./theatre-direction";
+import { noAmbience } from "./theatre-ambience";
 
 // Three workers keep service pressure modest while avoiding fully serial TTS.
 // This bounds requests per scene, not aggregate traffic from multiple users.
@@ -35,12 +36,14 @@ export async function generateTheatreResponse(
   const casting = createTheatreCasting(items, options.narratorVoice);
   const { analysis, metadata: direction } = await prepareDramaticDirection(items, options.analyze, options.analysisTimeoutMs);
   // Casting and complete validated direction are fixed before concurrent TTS.
-  const jobs = items.map((item) => ({
+  const jobs = items.flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
+    [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
     item,
-    voice: casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice,
+    voice, componentIndex,
     instructions: dramaticInstructions(item, analysis),
     speed: item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : Math.max(0.95, playbackSpeed),
-  }));
+  })));
+  const components: { voice: string; audioBase64: string }[][] = items.map(() => []);
   const clips: TheatreClip[] = new Array(items.length);
   const failedItems: FailedItem[] = [];
   let nextIndex = 0;
@@ -48,20 +51,31 @@ export async function generateTheatreResponse(
 
   async function worker() {
     while (nextIndex < jobs.length) {
-      const { item, voice, speed, instructions } = jobs[nextIndex++];
+      const { item, voice, speed, componentIndex, instructions } = jobs[nextIndex++];
       try {
         const audioBase64 = await synthesize({ text: item.text, voice, speed, instructions });
         if (!audioBase64.trim()) throw new Error("Empty theatre audio");
-        clips[item.index] = { ...item, voice, speed, audioBase64 };
-        generatedClipCount++;
+        components[item.index][componentIndex] = { voice, audioBase64 };
       } catch {
         // Do not expose upstream error bodies or discard the failed item's identity.
-        failedItems.push({ id: item.id, index: item.index, sourceLines: item.sourceLines });
+        if (!failedItems.some((failed) => failed.index === item.index)) {
+          failedItems.push({ id: item.id, index: item.index, sourceLines: item.sourceLines });
+        }
       }
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(THEATRE_TTS_CONCURRENCY, jobs.length) }, worker));
+  // A component failure fails its logical chorus and the scene explicitly.
+  // Never publish a partial chorus or advance an incomplete logical item.
+  for (const item of items) {
+    if (failedItems.some((failed) => failed.index === item.index)) continue;
+    const parts = components[item.index];
+    const speed = item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : Math.max(0.95, playbackSpeed);
+    clips[item.index] = { ...item, ...parts[0], speed,
+      ...(theatreRole(item) === "chorus" ? { chorus: { components: parts } } : {}) };
+    generatedClipCount++;
+  }
   if (failedItems.length) {
     failedItems.sort((a, b) => a.index - b.index);
     throw new TheatreGenerationError(failedItems, items.length, generatedClipCount);
@@ -71,6 +85,7 @@ export async function generateTheatreResponse(
     mode: "theatre",
     direction,
     casting,
+    ambience: analysis?.ambience ?? noAmbience(),
     integrity: {
       version: 1,
       parsedItemCount: items.length,

@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const createLoader = require("./load-typescript.cjs");
 const { source, parseTheatreItems, analysisFor } = require("./dramatic-fixtures.cjs");
-const { environment, load } = require("./playback-fixtures.cjs");
+const { environment, load, flush } = require("./playback-fixtures.cjs");
 const { ReadingPlaybackSession } = load("lib/reading-playback.ts");
 process.env.OPENAI_API_KEY = "test-only-placeholder";
 
@@ -41,12 +41,14 @@ test("route sends supported instructions separately from exact text, with correc
   assert.deepEqual(JSON.parse(analysisCalls[0].body.input[1].content).items, expected);
   assert.equal(data.direction.status, "analyzed");
   assert.deepEqual(data.integrity.expectedItemIds, ["line-1", "line-2", "line-4", "line-5"]);
-  assert.deepEqual(speechCalls.map(({ body }) => body.input), expected.map((item) => item.text));
+  assert.deepEqual(speechCalls.map(({ body }) => body.input), expected.flatMap((item) =>
+    item.speaker === "CHŒUR" ? [item.text, item.text, item.text] : [item.text]));
   assert.ok(speechCalls.every((call) => call.analysesCompleted === 1));
-  for (const [{ body }, i] of speechCalls.map((call, i) => [call, i])) {
+  for (const [sourceIndex, { body }] of speechCalls.entries()) {
+    const i = Math.min(sourceIndex, 3);
     assert.deepEqual(Object.keys(body).sort(), ["input", "instructions", "model", "speed", "voice"]);
     assert.equal(body.model, "gpt-4o-mini-tts");
-    assert.equal(body.voice, data.clips[i].voice);
+    assert.equal(body.voice, i === 3 ? data.clips[i].chorus.components[sourceIndex - 3].voice : data.clips[i].voice);
     assert.equal(body.speed, i === 0 ? Math.max(0.65, 1.15 - 0.15) : 1.15);
     assert.match(body.instructions, new RegExp(`tone=${i % 2 ? "warm" : "tense"}`));
     assert.equal(Buffer.from(data.clips[i].audioBase64, "base64").toString(), expected[i].text);
@@ -107,10 +109,11 @@ test("directed response works with unchanged playback, cached replay, practice, 
   assert.equal(session.getSnapshot().theatre.currentItemId, "line-3");
   env.latest().end(); // chorus
   assert.equal(session.theatre.enterPractice("line-4"), false);
-  env.latest().end();
+  await flush();
+  env.audios.slice(-3).forEach((audio) => audio.end());
   assert.equal(session.getSnapshot().theatre.status, "completed");
   assert.equal(session.getSnapshot().theatre.completions.length, 4);
-  assert.equal(requests, 1); assert.equal(analysisCalls.length, 1); assert.equal(speechCalls.length, 4);
+  assert.equal(requests, 1); assert.equal(analysisCalls.length, 1); assert.equal(speechCalls.length, 6);
   session.dispose();
   assert.equal(env.timers.size, 0);
   assert.deepEqual(env.revoked, env.created.map(({ url }) => url));

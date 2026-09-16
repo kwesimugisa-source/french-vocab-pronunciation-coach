@@ -13,6 +13,8 @@ export type TheatreItem = {
 };
 
 export type TheatreClip = TheatreItem & {
+  /** Separate cached sources; still ONE logical item. Primary audio retained for legacy clients. */
+  chorus?: { components: { voice: string; audioBase64: string }[] };
   voice: string;
   speed: number;
   audioBase64: string;
@@ -20,6 +22,7 @@ export type TheatreClip = TheatreItem & {
 
 export type TheatreResponse = {
   mode: "theatre";
+  ambience?: import("./theatre-ambience").AmbienceRecommendation;
   /** Advisory generation metadata only; never used as playback state. */
   direction?: import("./theatre-direction").DirectionMetadata;
   casting?: import("./theatre-casting").TheatreCasting;
@@ -117,5 +120,13 @@ export function assertCompleteTheatreResponse(
       typeof clip.speed !== "number" || !Number.isFinite(clip.speed) || clip.speed <= 0 ||
       typeof clip.audioBase64 !== "string" || !clip.audioBase64.trim()
     ) invalid();
+    if (clip.chorus !== undefined) {
+      const parts = clip.chorus?.components;
+      if (item.type !== "dialogue" || !["CHŒUR", "CHOEUR", "CHORUS"].some((name) => item.speaker.includes(name)) ||
+        !Array.isArray(parts) || parts.length !== 3 || new Set(parts.map((part) => part?.voice)).size !== 3 ||
+        parts.some((part) => !part || typeof part.voice !== "string" || !part.voice ||
+          typeof part.audioBase64 !== "string" || !part.audioBase64.trim()) ||
+        parts[0].voice !== clip.voice || parts[0].audioBase64 !== clip.audioBase64) invalid();
+    }
   });
 }

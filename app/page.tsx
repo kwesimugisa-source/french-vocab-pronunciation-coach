@@ -53,7 +53,7 @@ export default function Page() {
   const [selectedWordKey, setSelectedWordKey] = useState<string | null>(null);
 
   const [playback] = useState(() => new ReadingPlaybackSession());
-  const [pronunciation] = useState(() => new PronunciationSession());
+  const [pronunciation] = useState(() => new PronunciationSession(undefined, playback.beginMicrophoneCapture));
   const playbackState = useSyncExternalStore(playback.subscribe, playback.getSnapshot, playback.getSnapshot);
   const pronunciationState = useSyncExternalStore(pronunciation.subscribe, pronunciation.getSnapshot, pronunciation.getSnapshot);
   const articleRequest = useRef<AbortController | null>(null);
@@ -257,7 +257,6 @@ export default function Page() {
   function handleStartReading() {
     if (pronunciation.isBusy()) return;
     const target = playback.theatre.getSnapshot().practiceTarget;
-    playback.theatre.pause();
     void pronunciation.start(target ? {
       text: target.text, itemId: target.itemId,
       speaker: target.speaker, sessionId: target.sessionId,
@@ -341,6 +340,8 @@ export default function Page() {
       />
       {playbackState.error && <p role="alert" className="mb-4 text-sm text-red-700">{playbackState.error}</p>}
       {playbackState.mode === "theatre" && <TheatreControls
+        ambience={playbackState.ambience}
+        onAmbienceChange={(level) => playback.setAmbienceLevel(level)}
         playback={playbackState.theatre}
         recordingBusy={recordingBusy}
         onPause={() => playback.theatre.pause()}

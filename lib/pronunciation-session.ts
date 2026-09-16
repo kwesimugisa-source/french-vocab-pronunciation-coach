@@ -44,8 +44,10 @@ export class PronunciationSession {
   private recorder: MediaRecorder | null = null;
   private stream: MediaStream | null = null;
   private analysis: AbortController | null = null;
+  private releaseCapture: (() => void) | null = null;
 
-  constructor(private environment: RecordingEnvironment = browserRecordingEnvironment) {}
+  constructor(private environment: RecordingEnvironment = browserRecordingEnvironment,
+    private beforeCapture?: () => (() => void)) {}
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -64,6 +66,8 @@ export class PronunciationSession {
     }
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
+    this.releaseCapture?.();
+    this.releaseCapture = null;
   }
   reset() {
     this.epoch++;
@@ -85,6 +89,7 @@ export class PronunciationSession {
     const capturedTarget = { ...target };
     this.update({ status: "requesting-microphone", target: capturedTarget });
     try {
+      this.releaseCapture = this.beforeCapture?.() ?? null;
       const stream = await this.environment.getUserMedia();
       if (epoch !== this.epoch) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;

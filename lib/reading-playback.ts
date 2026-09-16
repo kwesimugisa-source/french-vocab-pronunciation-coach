@@ -1,11 +1,17 @@
 import { browserPlaybackEnvironment, TheatrePlaybackController } from "./theatre-playback";
 import type { PlaybackAudio, PlaybackEnvironment, TheatrePlaybackSnapshot } from "./theatre-playback";
+import { AmbiencePlayback } from "./ambience-playback";
+import type { AmbienceLevel } from "./ambience-playback";
+import { validateAmbience } from "./theatre-ambience";
+import type { AmbienceKind, AmbienceProvider } from "./theatre-ambience";
+import type { TheatreResponse } from "./theatre";
 
 type ReadingSnapshot = {
   mode: "pending" | "theatre" | "ordinary" | null;
   busy: boolean;
   theatre: TheatrePlaybackSnapshot;
   error: string | null;
+  ambience: { environment: AmbienceKind; level: AmbienceLevel };
 };
 
 /** Own the request before its response mode is known. Ordinary/poetry keep their
@@ -19,13 +25,18 @@ export class ReadingPlaybackSession {
   private listeners = new Set<() => void>();
   private snapshot: ReadingSnapshot;
   private unsubscribe: () => void;
+  private ambience: AmbiencePlayback;
+  private captures = 0;
 
   constructor(
     private environment: PlaybackEnvironment = browserPlaybackEnvironment,
-    private fetchAudio: typeof fetch = (...args) => fetch(...args)
+    private fetchAudio: typeof fetch = (...args) => fetch(...args),
+    ambienceProvider?: AmbienceProvider
   ) {
     this.theatre = new TheatrePlaybackController(environment);
-    this.snapshot = { mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null };
+    this.ambience = new AmbiencePlayback(environment, ambienceProvider);
+    this.snapshot = { mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null,
+      ambience: { environment: "none", level: "off" } };
     this.unsubscribe = this.theatre.subscribe(() => this.update({}));
   }
   getSnapshot = () => this.snapshot;
@@ -35,6 +46,7 @@ export class ReadingPlaybackSession {
   };
   private update(patch: Partial<ReadingSnapshot>) {
     const theatre = this.theatre.getSnapshot();
+    this.ambience.setActive(["playing", "paused", "replaying", "practising"].includes(theatre.status));
     this.snapshot = { ...this.snapshot, ...patch, theatre,
       busy: !!this.request || !!this.ordinary || !!theatre.practiceTarget ||
         ["playing", "paused", "replaying", "practising"].includes(theatre.status) };
@@ -56,13 +68,37 @@ export class ReadingPlaybackSession {
     this.request = null;
     request?.abort();
     this.releaseOrdinary();
+    this.ambience.stop();
     this.theatre.stop();
-    this.update({ mode: null, error: null });
+    this.update({ mode: null, error: null, ambience: { ...this.snapshot.ambience, environment: "none" } });
   }
+  setAmbienceLevel(level: AmbienceLevel) {
+    if (!["off", "low", "medium"].includes(level)) return;
+    this.ambience.setLevel(level);
+    this.update({ ambience: { ...this.snapshot.ambience, level } });
+  }
+  /** Reusable turn-taking boundary: synchronous silence BEFORE getUserMedia.
+   * The idempotent release restores ambience, never resumes performance. */
+  beginMicrophoneCapture = () => {
+    this.captures++;
+    this.ambience.setMuted(true);
+    this.theatre.setCaptureBlocked(true);
+    this.ordinary?.pause();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.captures--;
+      if (!this.captures) {
+        this.theatre.setCaptureBlocked(false);
+        this.ambience.setMuted(false);
+      }
+    };
+  };
   dispose() { this.stop(); this.unsubscribe(); this.listeners.clear(); this.theatre.dispose(); }
 
   async start(text: string, speed: string) {
-    if (this.snapshot.busy) return;
+    if (this.snapshot.busy || this.captures) return;
     this.stop();
     const request = new AbortController();
     this.request = request;
@@ -81,7 +117,10 @@ export class ReadingPlaybackSession {
           const data: unknown = await response.json();
           if (!current()) return;
           this.theatre.acceptScene(sessionId, data, text);
-          this.update({ mode: "theatre" });
+          const scene = data as TheatreResponse;
+          const recommendation = validateAmbience({ ...scene.ambience, confidence: "high" }, scene.clips);
+          this.ambience.configure(recommendation.environment);
+          this.update({ mode: "theatre", ambience: { ...this.snapshot.ambience, environment: recommendation.environment } });
         } else {
           const blob = await response.blob();
           if (!current()) return;
@@ -98,7 +137,7 @@ export class ReadingPlaybackSession {
           audio.onended = () => finish(null);
           audio.onerror = () => finish("Erreur de lecture audio.");
           this.update({ mode: "ordinary" });
-          void audio.play().catch(() => finish("Impossible de lancer la lecture IA."));
+          if (!this.captures) void audio.play().catch(() => finish("Impossible de lancer la lecture IA."));
         }
       } catch {
         if (!current()) return;

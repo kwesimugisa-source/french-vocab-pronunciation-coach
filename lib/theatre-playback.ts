@@ -1,5 +1,6 @@
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip } from "./theatre";
+import { ChorusAudio } from "./chorus-audio";
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
 export type PracticeTarget = {
@@ -24,7 +25,15 @@ export type TheatrePlaybackSnapshot = {
 };
 
 // Narrow browser boundary allows deterministic media tests without a real device.
+export type GroupPosition = { time: number; ended: boolean }[];
 export type PlaybackAudio = {
+  volume?: number;
+  loop?: boolean;
+  preload?: string;
+  readyState?: number;
+  oncanplay?: ((event: Event) => unknown) | null;
+  capturePosition?(): GroupPosition;
+  restorePosition?(position: GroupPosition): void;
   currentTime: number;
   ended: boolean;
   onended: ((event: Event) => unknown) | null;
@@ -72,9 +81,11 @@ export class TheatrePlaybackController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private timerEpoch = 0;
   private pausedMode: "playing" | "replaying" = "playing";
-  private bookmark: { index: number; position: number; status: PlaybackState } | null = null;
+  private bookmark: { index: number; position: number | GroupPosition; status: PlaybackState } | null = null;
+  private captureBlocked = false;
 
   constructor(private environment: PlaybackEnvironment = browserPlaybackEnvironment) {}
+  setCaptureBlocked(blocked: boolean) { this.captureBlocked = blocked; if (blocked) this.pause(); }
 
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -174,7 +185,8 @@ export class TheatrePlaybackController {
         currentIndex: index, currentItemId: item.id });
     }
   }
-  private playItem(index: number, mode: "playing" | "replaying" | "practising", position = 0, startPaused = false) {
+  private playItem(index: number, mode: "playing" | "replaying" | "practising", position: number | GroupPosition = 0, startPaused = false) {
+    startPaused = startPaused || this.captureBlocked;
     this.releaseAudio();
     const item = this.snapshot.queue[index];
     const attempt = this.attempt;
@@ -182,12 +194,17 @@ export class TheatrePlaybackController {
       automaticAdvancement: !startPaused && mode !== "practising",
       ...(mode !== "practising" ? { currentIndex: index, currentItemId: item.id } : {}) });
     try {
-      const bytes = Uint8Array.from(atob(item.audioBase64), (char) => char.charCodeAt(0));
-      this.url = this.environment.createUrl(new Blob([bytes], { type: "audio/mpeg" }));
-      const audio = this.environment.createAudio(this.url);
+      let audio: PlaybackAudio;
+      if (item.chorus) audio = new ChorusAudio(item.chorus.components, this.environment);
+      else {
+        const bytes = Uint8Array.from(atob(item.audioBase64), (char) => char.charCodeAt(0));
+        this.url = this.environment.createUrl(new Blob([bytes], { type: "audio/mpeg" }));
+        audio = this.environment.createAudio(this.url);
+      }
       this.audio = audio;
-      audio.currentTime = position;
-      let lastPosition = position;
+      if (typeof position === "number") audio.currentTime = position;
+      else audio.restorePosition?.(position);
+      let lastPosition = audio.currentTime;
       audio.ontimeupdate = () => {
         if (attempt !== this.attempt || this.snapshot.status === "paused" || this.snapshot.modelPaused) return;
         if (audio.currentTime > lastPosition) {
@@ -227,6 +244,7 @@ export class TheatrePlaybackController {
     this.update({ status: "paused", automaticAdvancement: false });
   }
   resume() {
+    if (this.captureBlocked) return;
     if (this.snapshot.practiceTarget && this.snapshot.modelPaused && this.audio) {
       this.update({ modelPlaying: true, modelPaused: false });
       if (this.audio.ended) this.audio.onended?.(new Event("ended"));
@@ -239,6 +257,7 @@ export class TheatrePlaybackController {
     else this.invokePlay(this.snapshot.queue[this.snapshot.currentIndex]);
   }
   replay() {
+    if (this.captureBlocked) return;
     const target = this.snapshot.practiceTarget;
     if (target) { this.playItem(target.index, "practising"); return; }
     if (this.snapshot.currentIndex < 0 || ["idle", "loading"].includes(this.snapshot.status)) return;
@@ -249,7 +268,7 @@ export class TheatrePlaybackController {
     if (this.snapshot.practiceTarget || ["idle", "loading"].includes(this.snapshot.status)) return false;
     const item = this.snapshot.queue.find((clip) => clip.id === itemId);
     if (!item || !canPractise(item)) return false;
-    this.bookmark = { index: this.snapshot.currentIndex, position: this.audio?.currentTime ?? 0,
+    this.bookmark = { index: this.snapshot.currentIndex, position: this.audio?.capturePosition?.() ?? this.audio?.currentTime ?? 0,
       status: this.snapshot.status };
     this.releaseAudio();
     this.update({ status: "practising", automaticAdvancement: false, modelPlaying: false, error: null,
