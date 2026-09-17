@@ -1,3 +1,4 @@
+import { segmentExercises } from "./tongue-twisters";
 import { isChorusSpeaker, speakerIdentity } from "./theatre-speakers";
 import { ContentDocument, Detection, EffectiveType, MAX_TEXT_LENGTH, Normalization, validateDocument } from "./content-document";
 
@@ -21,6 +22,8 @@ export function detectContent(text: string): Detection & { contentType: Effectiv
   const chorus = labels.some(isChorusSpeaker);
   const distinct = new Set(labels.map(speakerIdentity)).size;
   const result = (type: EffectiveType, confidence: Detection["confidence"], evidence: string[], candidates = [type]) => ({ contentType: type, confidence, candidates, evidence });
+  if (/^(?:virelangues?\b|exercice(?:\s+\d+)?\s+du\s+son\b)/imu.test(text) && !dramatic && !chorus)
+    return result("tongue-twisters", "high", ["Structure explicite d’exercices phonétiques"]);
   if (labels.length >= 2 && (dramatic || chorus || (stage && distinct >= 2)))
     return result("theatre", "high", ["Répliques et structure dramatique", ...(stage ? ["Didascalies entre parenthèses"] : []), ...(chorus ? ["Chœur"] : [])]);
   if (/\b(virelangue|exercice du son|répétez.*(?:son|fois))s?\b/iu.test(text) || /les chaussettes de l.archiduchesse|un chasseur sachant chasser/iu.test(text))
@@ -110,5 +113,6 @@ export function importDocument(originalText: string, documentId: string, overrid
   const doc: ContentDocument = { title: "Texte importé", source: "Utilisateur", text: rows.map(r => r.text).join("\n"),
     originalText, documentId, revision, origin: "imported", contentType: type, typeSource: override ? "learner-override" : type === "unknown" ? "unknown" : "detected",
     detection, normalization: actions, warnings, sourceMap: rows.map((r, i) => ({ canonicalLine: i + 1, originalLines: r.originals })) };
+  if (type === "tongue-twisters") doc.tongueTwisters = segmentExercises(doc.text);
   validateDocument(doc); return doc;
 }

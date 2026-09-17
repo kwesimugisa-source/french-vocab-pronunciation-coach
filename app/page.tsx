@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ReadingPlaybackSession } from "@/lib/reading-playback";
+import { ExercisePracticeSession } from "@/lib/exercise-practice";
+import { soundTarget } from "@/lib/tongue-twisters";
+import TongueTwisterPractice from "@/components/article-reader/TongueTwisterPractice";
 import { PronunciationSession } from "@/lib/pronunciation-session";
 import { CONTENT_LABELS, CONTENT_TYPES, ContentDocument, EffectiveType, generatedDocument, validateDocument } from "@/lib/content-document";
 import { importDocument } from "@/lib/smart-import";
@@ -43,6 +46,8 @@ export default function Page() {
 
   const [playback] = useState(() => new ReadingPlaybackSession());
   const [pronunciation] = useState(() => new PronunciationSession(undefined, playback.beginMicrophoneCapture));
+  const [practice] = useState(() => new ExercisePracticeSession(playback, pronunciation));
+  const practiceState = useSyncExternalStore(practice.subscribe, practice.getSnapshot, practice.getSnapshot);
   const playbackState = useSyncExternalStore(playback.subscribe, playback.getSnapshot, playback.getSnapshot);
   const pronunciationState = useSyncExternalStore(pronunciation.subscribe, pronunciation.getSnapshot, pronunciation.getSnapshot);
   const articleRequest = useRef<AbortController | null>(null);
@@ -50,6 +55,8 @@ export default function Page() {
   const recordingBusy = pronunciation.isBusy();
 
   const [contentType, setContentType] = useState("news");
+  const [targetSoundId, setTargetSoundId] = useState("mixed");
+  const [customSound, setCustomSound] = useState("");
   const [level, setLevel] = useState("B1");
   const [readingSpeed, setReadingSpeed] = useState("normal");
 
@@ -132,6 +139,7 @@ export default function Page() {
     playback.stop();
     pronunciation.reset();
     vocabulary.cancel();
+    practice.clear();
     setArticle(document);
 
     setSelectedWord(null);
@@ -158,7 +166,7 @@ export default function Page() {
       const document = importDocument(article.originalText, article.documentId, type, article.revision + 1);
       articleRequest.current?.abort(); articleRequest.current = null; setIsGenerating(false);
       playback.stop(); pronunciation.reset(); vocabulary.cancel();
-      setSelectedWord(null); setSelectedWordKey(null); setArticle(document);
+      setSelectedWord(null); setSelectedWordKey(null); practice.clear(); setArticle(document);
     } catch { alert("Impossible de réinterpréter ce texte."); }
   }
 
@@ -168,6 +176,10 @@ export default function Page() {
 
   function handlePlayAudio() {
     if (pronunciation.isBusy()) return;
+    if (article.contentType === "tongue-twisters") {
+      if (practiceState.target?.itemId) void practice.listen(article, practiceState.target.itemId, readingSpeed);
+      return;
+    }
     if (playback.getSnapshot().busy) handleStopPlayback();
     else {
       void playback.start(article.text, readingSpeed, article);
@@ -199,6 +211,7 @@ export default function Page() {
 
   function handleStartReading() {
     if (pronunciation.isBusy()) return;
+    if (article.contentType === "tongue-twisters") { void practice.record(); return; }
     const target = playback.theatre.getSnapshot().practiceTarget;
     void pronunciation.start(target ? {
       documentId: article.documentId, revision: article.revision, text: target.text, itemId: target.itemId,
@@ -209,6 +222,9 @@ export default function Page() {
   function handleStopReading() { pronunciation.stop(); }
   function handleAnalyzePronunciation() { void pronunciation.analyze(); }
   async function handleGenerateArticle() {
+    let target;
+    try { target = contentType === "tongue-twisters" ? soundTarget({ id: targetSoundId, label: customSound }) : undefined; }
+    catch (error) { alert(error instanceof Error ? error.message : "Son invalide."); return; }
     articleRequest.current?.abort();
     const request = new AbortController();
     articleRequest.current = request;
@@ -228,6 +244,7 @@ export default function Page() {
         body: JSON.stringify({
           contentType,
           level,
+          ...(target ? { targetSound: target } : {}),
           seed: Date.now(),
         }),
       });
@@ -245,7 +262,9 @@ export default function Page() {
       validateDocument(data);
       if (data.origin !== "generated" || data.typeSource !== "generated" || data.contentType !== contentType || data.level !== level)
         throw new Error("Identité du texte généré invalide.");
+      if (target && JSON.stringify(data.tongueTwisters?.target) !== JSON.stringify(target)) throw new Error("Son généré incompatible.");
       vocabulary.cancel();
+      practice.clear();
       setArticle(data);
 
       setSelectedWord(null);
@@ -288,6 +307,9 @@ export default function Page() {
         <p className="mt-2">Les sélecteurs de type et de niveau ci-dessous concernent le prochain texte généré.</p>
       </section>
       <ReadingSetupBar
+        targetSoundId={targetSoundId} customSound={customSound}
+        onTargetSoundChange={setTargetSoundId} onCustomSoundChange={setCustomSound}
+        hideAudio={article.contentType === "tongue-twisters"}
         contentType={contentType}
         level={level}
         isPlayingAudio={playbackState.busy}
@@ -301,6 +323,15 @@ export default function Page() {
         readingSpeed={readingSpeed}
         onReadingSpeedChange={setReadingSpeed}
       />
+      {article.contentType === "tongue-twisters" && <TongueTwisterPractice
+        document={article} selectedId={practiceState.target?.itemId} speed={readingSpeed}
+        busy={recordingBusy || isGenerating} audioBusy={playbackState.busy} pronunciation={pronunciationState}
+        onSpeedChange={setReadingSpeed}
+        onListen={id => { if (!isGenerating) void practice.listen(article, id, readingSpeed); }}
+        onSelect={id => { if (!isGenerating) practice.select(article, id); }}
+        onStopAudio={handleStopPlayback} onRecord={handleStartReading}
+        onStopRecording={handleStopReading} onAnalyze={handleAnalyzePronunciation}
+      />}
       {playbackState.error && <p role="alert" className="mb-4 text-sm text-red-700">{playbackState.error}</p>}
       {article.contentType === "theatre" && playbackState.mode !== "theatre" && <section className="mb-4 rounded-xl border p-4">
         <h2>Lecture théâtrale</h2>
@@ -366,7 +397,7 @@ export default function Page() {
         </div>
       </div>
 
-      <ReadingControls
+      {article.contentType !== "tongue-twisters" && <ReadingControls
         isRecording={isRecording}
         hasRecording={!!pronunciationState.recording}
         isBusy={recordingBusy}
@@ -383,9 +414,9 @@ export default function Page() {
         onStartReading={handleStartReading}
         onStopReading={handleStopReading}
         onAnalyzePronunciation={handleAnalyzePronunciation}
-      />
+      />}
 
-      <div className="mt-6 space-y-6">
+      {article.contentType !== "tongue-twisters" && <div className="mt-6 space-y-6">
         {pronunciationScore && <div className="rounded-xl border bg-white p-4">
           <p>Correspondance estimée entre transcription et texte : {pronunciationScore.overall}/100</p>
           <p className="text-sm text-slate-600">La reconnaissance vocale peut se tromper. Ce résultat ne mesure ni les sons, ni la fluidité, ni l’intonation.</p>
@@ -395,7 +426,7 @@ export default function Page() {
           <PronunciationSummary summary={pronunciationSummary} />
           <WeakPointsPanel weakPoints={pronunciationWeakPoints} />
         </div>
-      </div>
+      </div>}
     </AppShell>
   );
 }

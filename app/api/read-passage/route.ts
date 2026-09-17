@@ -3,7 +3,7 @@ import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/th
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
 
-import { detectContent } from "../../../lib/smart-import";
+import { readingMode } from "../../../lib/content-routing";
 import { isEffectiveType, MAX_TEXT_LENGTH, TTS_INPUT_LIMIT, validateIdentity } from "../../../lib/content-document";
 
 export const runtime = "nodejs";
@@ -63,8 +63,7 @@ export async function POST(req: Request) {
     };
 
     const playbackSpeed = speedMap[String(speed)] ?? 1.0;
-    const type = body.contentType === undefined ? detectContent(text).contentType : body.contentType;
-    const mode = type === "theatre" ? "theatre" : type === "poetry" ? "poetry" : "standard";
+    const mode = readingMode(text, body.contentType);
 
     if (mode === "theatre") {
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>

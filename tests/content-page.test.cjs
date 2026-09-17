@@ -41,7 +41,7 @@ function harness() {
     stop() { this.snapshot.status = "recorded"; this.snapshot.recording = { target: this.snapshot.target, blob: new Blob(["recording"]) }; }
   }
   const overrides = { react, "@/lib/reading-playback": { ReadingPlaybackSession: Playback }, "@/lib/pronunciation-session": { PronunciationSession: Pronunciation } };
-  for (const name of ["article-reader/ArticleHeader", "article-reader/ArticleTextPanel", "article-reader/ReadingControls", "article-reader/ReadingSetupBar", "article-reader/TheatreControls", "layout/AppShell", "pronunciation/PronunciationSummary", "pronunciation/WeakPointsPanel", "vocabulary/WordInsightPanel"])
+  for (const name of ["article-reader/ArticleHeader", "article-reader/ArticleTextPanel", "article-reader/ReadingControls", "article-reader/ReadingSetupBar", "article-reader/TheatreControls", "article-reader/TongueTwisterPractice", "layout/AppShell", "pronunciation/PronunciationSummary", "pronunciation/WeakPointsPanel", "vocabulary/WordInsightPanel"])
     overrides[`@/components/${name}`] = name.split("/").at(-1);
   const Page = createLoader(overrides)("app/page.tsx").default;
   function render() { cursor = 0; tree = Page(); effects.splice(0).forEach(fn => fn()); return tree; }
@@ -135,5 +135,35 @@ test("page generation after import stores requested identity even if selectors c
     const generation = h.setup().onGenerateArticle(); h.setup().onContentTypeChange("theatre"); h.setup().onLevelChange("C1"); h.render();
     pending.resolve(Response.json(makeDoc("poetry"))); await generation; h.render();
     assert.equal(h.document().contentType, "poetry"); assert.equal(h.document().level, "A1"); assert.equal(h.setup().contentType, "theatre");
+  } finally { h.dispose(); global.fetch = priorFetch; }
+});
+
+test("Virelangues page retains generated sound, shares contextual speed and records selected sentence", async () => {
+  const h = harness(), priorFetch = global.fetch, requests = [];
+  const { soundTarget } = createLoader()("lib/tongue-twisters.ts");
+  const doc = generatedDocument({ title: "R", text: "Trois gros rats gris.\n\nRare rire, rude rire !" }, "tongue-twisters", "A1", "sounds");
+  doc.tongueTwisters.target = soundTarget({ id: "r" }); doc.tongueTwisters.exercises.forEach(e => e.target = doc.tongueTwisters.target);
+  global.fetch = async (_url, options) => { requests.push(JSON.parse(options.body)); return Response.json(doc); };
+  try {
+    h.setup().onContentTypeChange("tongue-twisters"); h.setup().onLevelChange("A1"); h.setup().onTargetSoundChange("r"); h.render();
+    await h.setup().onGenerateArticle(); h.render(); assert.equal(requests[0].targetSound.id, "r");
+    h.setup().onTargetSoundChange("on"); h.render(); assert.equal(h.document().tongueTwisters.target.id, "r");
+    assert.equal(h.setup().hideAudio, true); assert.equal(h.find("ReadingControls"), undefined); assert.equal(h.find("TheatreControls"), undefined);
+    const second = h.document().tongueTwisters.exercises[1];
+    h.find("TongueTwisterPractice").onSelect(second.id); h.render(); assert.equal(h.pronunciation.snapshot.status, "idle");
+    for (const speed of ["very-slow", "slow", "normal", "fast"]) {
+      h.find("TongueTwisterPractice").onSpeedChange(speed); h.render(); assert.equal(h.setup().readingSpeed, speed);
+      h.find("TongueTwisterPractice").onListen(second.id); await flush(); assert.equal(h.plays.at(-1).speed, speed); assert.equal(h.plays.at(-1).text, second.text);
+    }
+    h.find("TongueTwisterPractice").onRecord(); h.render(); assert.equal(h.pronunciation.snapshot.target.text, second.text);
+    h.find("TongueTwisterPractice").onStopRecording(); h.render();
+    h.import("Une lecture ordinaire."); assert.equal(h.find("TongueTwisterPractice"), undefined); assert.ok(h.find("ReadingControls")); assert.equal(h.pronunciation.snapshot.recording, null);
+  } finally { h.dispose(); global.fetch = priorFetch; }
+});
+test("custom sound validation prevents generation without replacing active document", async () => {
+  const h = harness(), priorFetch = global.fetch; let calls = 0; global.fetch = async () => { calls++; throw new Error("should not call"); };
+  try {
+    const old = h.document(); h.setup().onContentTypeChange("tongue-twisters"); h.setup().onTargetSoundChange("custom"); h.setup().onCustomSoundChange("<instructions>"); h.render();
+    await h.setup().onGenerateArticle(); h.render(); assert.equal(calls, 0); assert.equal(h.document(), old); assert.equal(h.alerts.length, 1);
   } finally { h.dispose(); global.fetch = priorFetch; }
 });

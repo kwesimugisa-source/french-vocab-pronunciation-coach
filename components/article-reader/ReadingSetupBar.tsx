@@ -1,5 +1,11 @@
+import { READING_SPEEDS, SOUND_TARGETS } from "@/lib/tongue-twisters";
 type Props = {
   contentType: string;
+  targetSoundId?: string;
+  customSound?: string;
+  onTargetSoundChange?: (value: string) => void;
+  onCustomSoundChange?: (value: string) => void;
+  hideAudio?: boolean;
   level: string;
   readingSpeed: string;
   isPlayingAudio: boolean;
@@ -27,15 +33,11 @@ const contentTypes = [
 
 const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
-const readingSpeeds = [
-  { value: "very-slow", label: "Très lent" },
-  { value: "slow", label: "Lent" },
-  { value: "normal", label: "Normal" },
-  { value: "fast", label: "Rapide" },
-];
+const readingSpeeds = READING_SPEEDS;
 
 export default function ReadingSetupBar({
   contentType,
+  targetSoundId = "mixed", customSound = "", onTargetSoundChange, onCustomSoundChange, hideAudio = false,
   level,
   readingSpeed,
   isPlayingAudio,
@@ -73,6 +75,15 @@ export default function ReadingSetupBar({
             </select>
           </div>
 
+          {contentType === "tongue-twisters" && <div className="min-w-[220px]">
+            <label htmlFor="targetSound" className="mb-2 block text-sm">Son à pratiquer</label>
+            <select id="targetSound" className="w-full rounded-2xl border p-3" value={targetSoundId} onChange={e => onTargetSoundChange?.(e.target.value)}>
+              {SOUND_TARGETS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+            {targetSoundId === "custom" && <label className="mt-2 block text-sm">Autre son (40 caractères maximum)
+              <input aria-label="Autre son à pratiquer" maxLength={40} className="mt-1 w-full rounded-xl border p-2" value={customSound} onChange={e => onCustomSoundChange?.(e.target.value)} placeholder="Ex. : EU / ŒU" />
+            </label>}
+          </div>}
           <div className="min-w-[140px]">
             <label
               htmlFor="level"
@@ -126,14 +137,14 @@ export default function ReadingSetupBar({
            {isGenerating ? "Génération..." : "Générer un texte"}
           </button>
 
-          <button
+          {!hideAudio && <button
             type="button"
             onClick={onPlayAudio}
             disabled={audioDisabled}
             className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
             {audioLabel ?? (isPlayingAudio ? "Arrêter la lecture IA" : "Lecture la IA")}
-          </button>
+          </button>}
         </div>
       </div>
 

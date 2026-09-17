@@ -1,3 +1,4 @@
+import { segmentExercises, TongueTwisters, validatePractice } from "./tongue-twisters";
 import type { ArticleData } from "./types";
 
 export const CONTENT_TYPES = ["news", "opinion", "creative", "conversation", "academic", "everyday-life", "poetry", "theatre", "tongue-twisters"] as const;
@@ -13,6 +14,7 @@ export type SourceLine = { canonicalLine: number; originalLines: number[] };
 export type Normalization = { kind: "heading" | "pagination" | "wrap" | "newlines"; originalLines: number[]; detail: string };
 export type ContentIdentity = { documentId: string; revision: number; contentType: EffectiveType };
 export type ContentDocument = ArticleData & ContentIdentity & {
+  tongueTwisters?: TongueTwisters;
   origin: "generated" | "imported";
   originalText: string;
   typeSource: "generated" | "detected" | "learner-override" | "unknown";
@@ -48,6 +50,10 @@ export function validateDocument(value: unknown): asserts value is ContentDocume
     !Array.isArray(v.warnings) || !v.warnings.every(x => typeof x === "string") || !Array.isArray(v.normalization) ||
     !Array.isArray(v.sourceMap) || v.sourceMap.length !== v.text.split("\n").length)
     throw new Error("Métadonnées du document invalides.");
+  if (v.tongueTwisters !== undefined) {
+    if (v.contentType !== "tongue-twisters") throw new Error("Exercices incompatibles avec le type du document.");
+    validatePractice(v.tongueTwisters, v.text);
+  }
   const count = v.originalText.split(/\r\n|\r|\n/).length;
   const validLines = (lines: number[]) => Array.isArray(lines) && lines.length > 0 && lines.every(n => Number.isInteger(n) && n >= 1 && n <= count);
   if (!v.sourceMap.every((m, i) => m.canonicalLine === i + 1 && validLines(m.originalLines)) ||
@@ -69,5 +75,6 @@ export function generatedDocument(article: unknown, contentType: ContentType, le
   const doc: ContentDocument = { ...article, level, documentId, revision: 1, contentType, origin: "generated", originalText: article.text,
     typeSource: "generated", detection: { confidence: "high", candidates: [contentType], evidence: ["Type demandé à la génération"] },
     normalization: [], warnings: [], sourceMap: sourceMap(article.text) };
+  if (contentType === "tongue-twisters") doc.tongueTwisters = segmentExercises(doc.text);
   validateDocument(doc); return doc;
 }
