@@ -1,3 +1,4 @@
+import { isEffectiveType, LEVELS, validateIdentity } from "../../../lib/content-document";
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 
@@ -5,6 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type AnalyzeWordRequest = {
+  documentId?: string;
+  revision?: number;
   word?: string;
   sentence?: string;
   level?: string;
@@ -26,14 +29,17 @@ export async function POST(req: Request) {
 
     const body = (await req.json()) as AnalyzeWordRequest;
 
-    const word = body.word?.trim();
-    const sentence = body.sentence?.trim() || "";
-    const level = body.level?.trim() || "B1";
-    const contentType = body.contentType?.trim() || "news";
-
-    if (!word) {
-      return NextResponse.json({ error: "Missing word." }, { status: 400 });
+    if (!body || typeof body.word !== "string" || !body.word.trim() || body.word.length > 100 ||
+      typeof body.sentence !== "string" || body.sentence.length > 60000 || !isEffectiveType(body.contentType) ||
+      (body.level !== "unknown" && !LEVELS.includes(body.level as typeof LEVELS[number])))
+      return NextResponse.json({ error: "Contexte du mot invalide." }, { status: 400 });
+    if (body.documentId !== undefined || body.revision !== undefined) {
+      try { validateIdentity({ ...body }); } catch { return NextResponse.json({ error: "Identité invalide." }, { status: 400 }); }
     }
+    const word = body.word.trim();
+    const sentence = body.sentence.trim();
+    const level = body.level;
+    const contentType = body.contentType;
 
     const response = await client.responses.create({
       model: "gpt-5.4-mini",
@@ -62,6 +68,7 @@ Return only valid JSON with this exact shape:
 }
 
 Rules:
+- An unknown level is not an assessed CEFR level; use accessible explanations without assigning a level.
 - Analyze the word in the context of the supplied sentence.
 - Write explanations in clear learner-friendly English.
 - If a field does not apply, use "—".

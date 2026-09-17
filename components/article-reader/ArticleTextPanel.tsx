@@ -1,8 +1,9 @@
+import { textBlocks } from "@/lib/vocabulary-session";
 import type { ArticleData } from "@/lib/types";
 
 type Props = {
   article: ArticleData;
-  onWordClick: (word: string) => void;
+  onWordClick: (word: string, offset: number) => void;
   selectedWord: string | null;
   weakWords?: string[];
 };
@@ -33,9 +34,9 @@ export default function ArticleTextPanel({
       </div>
 
       <div className="space-y-6 text-[16px] leading-8 text-slate-700">
-        {article.text.split("\n\n").map((block, index) => (
+        {textBlocks(article.text).map((block, index) => (
           <p key={index} className="whitespace-pre-line">
-            {block.split(/(\s+)/).map((part, i) => {
+            {block.map(({ word: part, offset }, i) => {
               if (/^\s+$/.test(part)) {
                 return part;
               }
@@ -48,7 +49,7 @@ export default function ArticleTextPanel({
                 <button
                   key={`${index}-${i}`}
                   type="button"
-                  onClick={() => onWordClick(part)}
+                  onClick={() => onWordClick(part, offset)}
                   className={[
                     "inline rounded px-1 text-left transition",
                     "hover:bg-amber-100",

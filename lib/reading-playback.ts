@@ -1,3 +1,4 @@
+import { ContentIdentity, validateIdentity } from "./content-document";
 import { browserPlaybackEnvironment, TheatrePlaybackController } from "./theatre-playback";
 import type { PlaybackAudio, PlaybackEnvironment, TheatrePlaybackSnapshot } from "./theatre-playback";
 import { AmbiencePlayback } from "./ambience-playback";
@@ -97,9 +98,12 @@ export class ReadingPlaybackSession {
   };
   dispose() { this.stop(); this.unsubscribe(); this.listeners.clear(); this.theatre.dispose(); }
 
-  async start(text: string, speed: string) {
+  async start(text: string, speed: string, identity?: ContentIdentity) {
     if (this.snapshot.busy || this.captures) return;
     this.stop();
+    if (identity) {
+      try { validateIdentity(identity); } catch { this.update({ error: "Identité du document invalide." }); return; }
+    }
     const request = new AbortController();
     this.request = request;
     this.update({ mode: "pending", error: null });
@@ -109,11 +113,16 @@ export class ReadingPlaybackSession {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, speed }), signal: request.signal,
+          body: JSON.stringify({ text, speed, ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType } : {}) }), signal: request.signal,
         });
         if (!current()) return;
-        if (!response.ok) throw new Error("Échec de la génération audio.");
+        if (!response.ok) {
+          if (response.status === 413) throw new Error(await response.text());
+          throw new Error("Échec de la génération audio. Aucun passage incomplet ne sera lu.");
+        }
         if ((response.headers.get("Content-Type") || "").includes("application/json")) {
+          if (identity && identity.contentType !== "theatre")
+            throw new Error("Le mode audio reçu ne correspond pas au texte.");
           const data: unknown = await response.json();
           if (!current()) return;
           this.theatre.acceptScene(sessionId, data, text);
@@ -126,6 +135,7 @@ export class ReadingPlaybackSession {
           this.ambience.configure(recommendation.environment);
           this.update({ mode: "theatre", ambience: { ...this.snapshot.ambience, environment: recommendation.environment } });
         } else {
+          if (identity?.contentType === "theatre") throw new Error("La scène théâtrale reçue est incomplète.");
           const blob = await response.blob();
           if (!current()) return;
           if (!blob.size) throw new Error("La réponse audio est vide.");
@@ -143,11 +153,11 @@ export class ReadingPlaybackSession {
           this.update({ mode: "ordinary" });
           if (!this.captures) void audio.play().catch(() => finish("Impossible de lancer la lecture IA."));
         }
-      } catch {
+      } catch (error) {
         if (!current()) return;
         this.releaseOrdinary();
         this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");
-        this.update({ error: "Impossible de charger la lecture IA. Réessayez." });
+        this.update({ error: error instanceof Error ? error.message : "Impossible de charger la lecture IA. Réessayez." });
       } finally {
         if (this.request === request) { this.request = null; this.update({}); }
       }

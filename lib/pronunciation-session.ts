@@ -2,13 +2,15 @@ import type { PronunciationIssue } from "./types";
 
 export type PronunciationTarget = {
   text: string;
+  documentId?: string;
+  revision?: number;
   itemId?: string;
   speaker?: string;
   sessionId?: number;
 };
 export type PronunciationFeedback = {
   summary: { overall: string; clarity: string; rhythm: string; priority: string } | null;
-  score: { overall: number; pronunciation: number; fluency: number; intonation: number } | null;
+  score: { overall: number; pronunciation: number; fluency: number | null; intonation: number | null } | null;
   weakPoints: PronunciationIssue[];
   transcript?: string;
 };

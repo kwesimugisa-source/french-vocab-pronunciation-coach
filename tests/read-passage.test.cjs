@@ -13,11 +13,11 @@ function routeWith(speech) {
   return createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST;
 }
 
-function request(text, speed) {
+function request(text, speed, contentType = "theatre") {
   return new Request("http://localhost/api/read-passage", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, ...(speed === undefined ? {} : { speed }) }),
+    body: JSON.stringify({ text, contentType, ...(speed === undefined ? {} : { speed }) }),
   });
 }
 
@@ -104,12 +104,12 @@ for (const [mode, text] of [
   ["standard", "Voici un texte ordinaire. Il conserve sa lecture habituelle."],
   ["poetry", "Un vers\nDeux vers\nTrois vers\n\nQuatre vers\nCinq vers\nSix vers"],
 ]) {
-  for (const [speed, expected] of [["very-slow", 0.7], ["slow", 0.85], ["normal", 1], ["fast", 1.15], ["unknown", 1], [undefined, 1]]) {
+  for (const [speed, expected] of [["very-slow", 0.7], ["slow", 0.85], ["normal", 1], ["fast", 1.15], [undefined, 1]]) {
     test(`${mode} ${speed ?? "default"}: existing single-audio contract and speed are preserved`, async () => {
       const calls = [];
       const bytes = Buffer.from([0xff, 0xfb, 0x01, 0x02]);
       const post = routeWith(async (body) => { calls.push(body); return { arrayBuffer: async () => bytes }; });
-      const response = await post(request(text, speed));
+      const response = await post(request(text, speed, mode === "standard" ? "news" : "poetry"));
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("content-type"), "audio/mpeg");
       assert.equal(response.headers.get("x-reading-mode"), mode);
@@ -123,5 +123,5 @@ test("missing text retains the existing 400 response without TTS", async () => {
   const post = routeWith(async () => { assert.fail("must not call speech"); });
   const response = await post(request(""));
   assert.equal(response.status, 400);
-  assert.equal(await response.text(), "Missing text");
+  assert.equal(await response.text(), "Texte ou type invalide.");
 });

@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ReadingPlaybackSession } from "@/lib/reading-playback";
 import { PronunciationSession } from "@/lib/pronunciation-session";
-import { getWordInsight } from "@/lib/getWordInsight";
+import { CONTENT_LABELS, CONTENT_TYPES, ContentDocument, EffectiveType, generatedDocument, validateDocument } from "@/lib/content-document";
+import { importDocument } from "@/lib/smart-import";
+import { VocabularySession, sentenceAt } from "@/lib/vocabulary-session";
 import ArticleHeader from "@/components/article-reader/ArticleHeader";
 import ArticleTextPanel from "@/components/article-reader/ArticleTextPanel";
 import ReadingControls from "@/components/article-reader/ReadingControls";
@@ -18,7 +20,7 @@ import type { ArticleData, WordInsight } from "@/lib/types";
 const initialArticle: ArticleData = {
   title: "Une promenade dans un quartier de Montréal",
   source: "Texte de démonstration",
-  level: "B1–B2",
+  level: "B1",
   text: `Le samedi matin, plusieurs habitants du quartier se rendent au marché pour acheter des produits frais. Certains prennent le temps de discuter avec les commerçants, tandis que d'autres préfèrent faire leurs courses rapidement avant de rentrer chez eux.
 
 Dans les rues voisines, on entend souvent des conversations en français, en anglais et parfois dans d'autres langues. Cette diversité donne au quartier une atmosphère vivante et chaleureuse.
@@ -33,22 +35,9 @@ function normalizeWord(word: string) {
     .replace(/^[^a-zàâçéèêëîïôûùüÿñæœ'-]+|[^a-zàâçéèêëîïôûùüÿñæœ'-]+$/gi, "");
 }
 
-function splitIntoSentences(text: string) {
-  return text.replace(/\n+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
-}
-
-function findSentenceForWord(text: string, targetWord: string) {
-  const sentences = splitIntoSentences(text);
-
-  return (
-    sentences.find((sentence) => {
-      const words = sentence.split(/\s+/).map(normalizeWord);
-      return words.includes(targetWord);
-    }) || null
-  );
-}
-
 export default function Page() {
+  const [vocabulary] = useState(() => new VocabularySession());
+  const [selectedOffset, setSelectedOffset] = useState(0);
   const [selectedWord, setSelectedWord] = useState<WordInsight | null>(null);
   const [selectedWordKey, setSelectedWordKey] = useState<string | null>(null);
 
@@ -64,7 +53,7 @@ export default function Page() {
   const [level, setLevel] = useState("B1");
   const [readingSpeed, setReadingSpeed] = useState("normal");
 
-  const [article, setArticle] = useState<ArticleData>(initialArticle);
+  const [article, setArticle] = useState<ContentDocument>(() => generatedDocument(initialArticle, "news", "B1", "demo"));
   const [isGenerating, setIsGenerating] = useState(false);
 
   const [showImportBox, setShowImportBox] = useState(false);
@@ -80,8 +69,8 @@ export default function Page() {
   const [pronunciationScore, setPronunciationScore] = useState<{
     overall: number;
     pronunciation: number;
-    fluency: number;
-    intonation: number;
+    fluency: number | null;
+    intonation: number | null;
   } | null>(null);
 
   const [pronunciationWeakPoints, setPronunciationWeakPoints] = useState<
@@ -92,9 +81,10 @@ export default function Page() {
 
   useEffect(() => () => {
     articleRequest.current?.abort();
+    vocabulary.cancel();
     playback.stop();
     pronunciation.reset();
-  }, [playback, pronunciation]);
+  }, [playback, pronunciation, vocabulary]);
 
   useEffect(() => {
     const feedback = pronunciationState.feedback;
@@ -106,7 +96,7 @@ export default function Page() {
     }
   }, [pronunciationState.feedback]);
 
-  const analysisText = playbackState.theatre.practiceTarget?.text ?? article.text;
+  const analysisText = article.text;
 
   const fallbackInsight = useMemo<WordInsight | null>(() => {
     if (!selectedWordKey) return null;
@@ -121,36 +111,28 @@ export default function Page() {
       mood: "—",
       conjugation: "À analyser",
       usage:
-        "Aucune fiche locale pour ce mot pour l'instant. Plus tard, cette zone sera remplie par l'analyse AI.",
-      sentence: findSentenceForWord(analysisText, selectedWordKey) || "—",
+        "Analyse du mot dans la phrase sélectionnée…",
+      sentence: sentenceAt(analysisText, selectedOffset) || "—",
       francePronunciation: "À venir",
       quebecPronunciation: "À venir",
     };
-  }, [selectedWordKey, analysisText]);
+  }, [selectedWordKey, analysisText, selectedOffset]);
 
   function countWords(text: string) {
     return text.trim().split(/\s+/).filter(Boolean).length;
   }
 
   function handleImportText() {
-    const wordCount = countWords(importedText);
-
-    if (wordCount < 50 || wordCount > 2500) {
-      alert("Le texte doit contenir entre 50 et 2 500 mots.");
-      return;
-    }
-
+    let document: ContentDocument;
+    try { document = importDocument(importedText, crypto.randomUUID()); }
+    catch (error) { alert(error instanceof Error ? error.message : "Import impossible."); return; }
     articleRequest.current?.abort();
     articleRequest.current = null;
     setIsGenerating(false);
     playback.stop();
     pronunciation.reset();
-    setArticle({
-      title: "Texte importé",
-      source: "Utilisateur",
-      level: "Personnalisé",
-      text: importedText.trim(),
-    });
+    vocabulary.cancel();
+    setArticle(document);
 
     setSelectedWord(null);
     setSelectedWordKey(null);
@@ -162,74 +144,33 @@ export default function Page() {
     setShowImportBox(false);
   }
 
-  async function handleAnalyzeWord(rawWord: string) {
+  async function handleAnalyzeWord(rawWord: string, offset: number) {
     const cleaned = normalizeWord(rawWord);
     if (!cleaned) return;
+    setSelectedWord(null); setSelectedWordKey(cleaned); setSelectedOffset(offset);
+    const result = await vocabulary.analyze(article, cleaned, offset);
+    if (result) setSelectedWord(result);
+  }
 
-    const sentence = findSentenceForWord(analysisText, cleaned) || "—";
-
-    setSelectedWordKey(cleaned);
-
+  function handleReinterpret(type: EffectiveType) {
+    if (article.origin !== "imported") return;
     try {
-      const response = await fetch("/api/analyze-word", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          word: cleaned,
-          sentence,
-          level,
-          contentType,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Échec de l’analyse du mot.");
-      }
-
-      const data = await response.json();
-      setSelectedWord(data);
-    } catch (error) {
-      console.error(error);
-
-      const localInsight = getWordInsight(cleaned);
-
-      setSelectedWord(
-        localInsight
-          ? {
-              ...localInsight,
-              sentence: localInsight.sentence || sentence,
-            }
-          : {
-              word: cleaned,
-              root: cleaned,
-              partOfSpeech: "—",
-              roleInSentence: "—",
-              infinitive: "—",
-              tense: "—",
-              mood: "—",
-              conjugation: "—",
-              usage: "Analyse indisponible pour le moment.",
-              sentence,
-              francePronunciation: "—",
-              quebecPronunciation: "—",
-            }
-      );
-    }
+      const document = importDocument(article.originalText, article.documentId, type, article.revision + 1);
+      articleRequest.current?.abort(); articleRequest.current = null; setIsGenerating(false);
+      playback.stop(); pronunciation.reset(); vocabulary.cancel();
+      setSelectedWord(null); setSelectedWordKey(null); setArticle(document);
+    } catch { alert("Impossible de réinterpréter ce texte."); }
   }
 
   function handleStopPlayback() {
     playback.stop();
-    pronunciation.reset();
   }
 
   function handlePlayAudio() {
     if (pronunciation.isBusy()) return;
     if (playback.getSnapshot().busy) handleStopPlayback();
     else {
-      pronunciation.reset();
-      void playback.start(article.text, readingSpeed);
+      void playback.start(article.text, readingSpeed, article);
     }
   }
 
@@ -237,6 +178,7 @@ export default function Page() {
     if (pronunciation.isBusy()) return;
     if (playback.theatre.enterPractice(itemId)) {
       pronunciation.reset();
+      vocabulary.cancel();
       setSelectedWord(null);
       setSelectedWordKey(null);
     }
@@ -246,6 +188,7 @@ export default function Page() {
     if (pronunciation.isBusy()) return;
     pronunciation.reset();
     playback.theatre.finishPractice();
+    vocabulary.cancel();
     setSelectedWord(null);
     setSelectedWordKey(null);
   }
@@ -258,9 +201,9 @@ export default function Page() {
     if (pronunciation.isBusy()) return;
     const target = playback.theatre.getSnapshot().practiceTarget;
     void pronunciation.start(target ? {
-      text: target.text, itemId: target.itemId,
+      documentId: article.documentId, revision: article.revision, text: target.text, itemId: target.itemId,
       speaker: target.speaker, sessionId: target.sessionId,
-    } : { text: article.text });
+    } : { text: article.text, documentId: article.documentId, revision: article.revision });
   }
 
   function handleStopReading() { pronunciation.stop(); }
@@ -269,6 +212,8 @@ export default function Page() {
     articleRequest.current?.abort();
     const request = new AbortController();
     articleRequest.current = request;
+    vocabulary.cancel();
+    setSelectedWord(null); setSelectedWordKey(null);
     playback.stop();
     pronunciation.reset();
     try {
@@ -297,12 +242,11 @@ export default function Page() {
       playback.stop();
       pronunciation.reset();
 
-      setArticle({
-        title: data.title,
-        source: data.source,
-        level: data.level,
-        text: data.text,
-      });
+      validateDocument(data);
+      if (data.origin !== "generated" || data.typeSource !== "generated" || data.contentType !== contentType || data.level !== level)
+        throw new Error("Identité du texte généré invalide.");
+      vocabulary.cancel();
+      setArticle(data);
 
       setSelectedWord(null);
       setSelectedWordKey(null);
@@ -324,6 +268,25 @@ export default function Page() {
     <AppShell>
       <ArticleHeader article={article} />
 
+      <section className="mb-4 text-sm text-slate-600" aria-label="Identité du texte">
+        <p>Texte actuel : {CONTENT_LABELS[article.contentType]} · Niveau : {article.level ?? "non évalué"} ·
+          {({ generated: " Type choisi à la génération", detected: " Type détecté", "learner-override": " Choix manuel", unknown: " Genre incertain" })[article.typeSource]}</p>
+        {article.origin === "imported" && <>
+          <label>Réinterpréter ce texte : <select aria-label="Type du texte importé" value={article.contentType}
+            onChange={e => handleReinterpret(e.target.value as EffectiveType)}>
+            {(["unknown", ...CONTENT_TYPES] as EffectiveType[]).map(type => <option key={type} value={type}>{CONTENT_LABELS[type]}</option>)}
+          </select></label>
+          <p>Confiance : {({ high: "élevée", medium: "moyenne", low: "faible" })[article.detection.confidence]} ·
+            Genres possibles : {article.detection.candidates.map(type => CONTENT_LABELS[type]).join(", ")}</p>
+          <details><summary>Source et préparation du texte ({article.normalization.length} ajustements)</summary>
+            <p>{article.detection.evidence.join(" · ")}</p>
+            {article.normalization.map((a, i) => <p key={i}>Lignes {a.originalLines.join(", ")} : {a.detail}</p>)}
+            {article.warnings.map((warning, i) => <p key={i}>{warning}</p>)}
+            <pre className="whitespace-pre-wrap">{article.originalText}</pre>
+          </details>
+        </>}
+        <p className="mt-2">Les sélecteurs de type et de niveau ci-dessous concernent le prochain texte généré.</p>
+      </section>
       <ReadingSetupBar
         contentType={contentType}
         level={level}
@@ -339,7 +302,11 @@ export default function Page() {
         onReadingSpeedChange={setReadingSpeed}
       />
       {playbackState.error && <p role="alert" className="mb-4 text-sm text-red-700">{playbackState.error}</p>}
-      {playbackState.mode === "theatre" && <TheatreControls
+      {article.contentType === "theatre" && playbackState.mode !== "theatre" && <section className="mb-4 rounded-xl border p-4">
+        <h2>Lecture théâtrale</h2>
+        <p>Lancez la lecture IA pour préparer les voix. Pause, reprise, réécoute et pratique des répliques seront ensuite disponibles.</p>
+      </section>}
+      {article.contentType === "theatre" && playbackState.mode === "theatre" && <TheatreControls
         ambience={playbackState.ambience}
         onAmbienceChange={(level) => playback.setAmbienceLevel(level)}
         playback={playbackState.theatre}
@@ -371,7 +338,7 @@ export default function Page() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
         <span>{countWords(importedText)} / 2 500 mots</span>
-        <span>Minimum : 50 mots</span>
+        <span>Textes courts acceptés · maximum 60 000 caractères</span>
       </div>
 
       <button
@@ -419,37 +386,10 @@ export default function Page() {
       />
 
       <div className="mt-6 space-y-6">
-        {pronunciationScore && (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs text-slate-500">Évaluation générale</div>
-              <div className="text-2xl font-bold">
-                {pronunciationScore.overall}/100
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs text-slate-500">Prononciation</div>
-              <div className="text-2xl font-bold">
-                {pronunciationScore.pronunciation}/100
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs text-slate-500">Fluidité</div>
-              <div className="text-2xl font-bold">
-                {pronunciationScore.fluency}/100
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-white p-4">
-              <div className="text-xs text-slate-500">Intonation</div>
-              <div className="text-2xl font-bold">
-                {pronunciationScore.intonation}/100
-              </div>
-            </div>
-          </div>
-        )}
+        {pronunciationScore && <div className="rounded-xl border bg-white p-4">
+          <p>Correspondance estimée entre transcription et texte : {pronunciationScore.overall}/100</p>
+          <p className="text-sm text-slate-600">La reconnaissance vocale peut se tromper. Ce résultat ne mesure ni les sons, ni la fluidité, ni l’intonation.</p>
+        </div>}
 
         <div className="grid gap-6 lg:grid-cols-2">
           <PronunciationSummary summary={pronunciationSummary} />

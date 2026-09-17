@@ -58,8 +58,9 @@ test("repeated réplique recordings use the EXISTING pronunciation route, refere
     controller.replay(); controller.suspendPracticeAudio();
     await pronunciation.start(target); pronunciation.stop(); await pronunciation.analyze();
     assert.equal(pronunciation.getSnapshot().status, "analyzed");
-    assert.deepEqual(pronunciation.getSnapshot().feedback.score, feedback.score);
-    assert.deepEqual(pronunciation.getSnapshot().feedback.weakPoints, feedback.weakPoints);
+    assert.deepEqual(pronunciation.getSnapshot().feedback.score, { overall: 80, pronunciation: 80, fluency: null, intonation: null });
+    assert.deepEqual(pronunciation.getSnapshot().feedback.weakPoints.map(p => p.word), ["Bonjour"]);
+    assert.match(pronunciation.getSnapshot().feedback.weakPoints[0].note, /reconnaissance vocale/);
     assert.equal(pronunciation.getSnapshot().recording.target.itemId, "line-2");
     assert.equal(controller.getSnapshot().currentIndex, 1);
     assert.equal(controller.getSnapshot().status, "practising");

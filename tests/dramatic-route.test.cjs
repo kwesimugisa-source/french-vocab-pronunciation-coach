@@ -27,8 +27,8 @@ function routeWith(analysisReply) {
   }
   return { post: createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST, analysisCalls, speechCalls };
 }
-const request = (text, speed = "normal") => new Request("http://localhost/api/read-passage", {
-  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, speed }),
+const request = (text, speed = "normal", contentType = "theatre") => new Request("http://localhost/api/read-passage", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, speed, contentType }),
 });
 
 test("real import route detects theatre and carries contextual office evidence and both chorus groups to the client", async () => {
@@ -145,7 +145,7 @@ test("directed response works with unchanged playback, cached replay, practice, 
 test("ordinary reading and poetry never invoke dramatic analysis or add instructions", async () => {
   const { post, analysisCalls, speechCalls } = routeWith(async () => assert.fail("no scene analysis"));
   for (const text of ["Un texte ordinaire.", "Un\nDeux\nTrois\n\nQuatre\nCinq\nSix"]) {
-    const response = await post(request(text, "slow"));
+    const response = await post(request(text, "slow", text.includes("\n") ? "poetry" : "news"));
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "audio/mpeg");
   }

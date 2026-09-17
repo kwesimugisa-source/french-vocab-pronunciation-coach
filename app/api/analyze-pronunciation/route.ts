@@ -51,8 +51,8 @@ Return only valid JSON with this exact shape:
   "score": {
     "overall": number,
     "pronunciation": number,
-    "fluency": number,
-    "intonation": number
+    "fluency": null,
+    "intonation": null
   },
   "summary": {
     "overall": "string",
@@ -70,24 +70,16 @@ Return only valid JSON with this exact shape:
   "transcript": "string"
 }
 
-Scoring rules:
-- overall: combined reading score from 0 to 100.
-- pronunciation: word accuracy and sound clarity from 0 to 100.
-- fluency: pacing, pauses, hesitation, and smoothness from 0 to 100.
-- intonation: natural stress, expression, and sentence melody from 0 to 100.
-- Be fair but strict.
-- If the transcript is very different from the reference, lower pronunciation and overall.
-- If the reading is understandable but hesitant, lower fluency.
-- If the reading is accurate but flat/robotic, lower intonation.
-
-Rules:
-- Compare the user's transcript with the reference passage.
-- Focus on learner-friendly pronunciation feedback.
-- Mention likely skipped, changed, or unclear words.
-- Keep feedback concise and practical.
-- If evidence is weak, say "possible issue" rather than overclaiming.
-- Return at most 6 weak points.
-- transcript must be the user's transcribed reading.
+Evidence limits:
+- You receive only a reference and a machine-generated transcript, not acoustic evidence.
+- overall and pronunciation are legacy field names for estimated transcript/reference word correspondence, from 0 to 100.
+- fluency and intonation MUST be null: neither is measured.
+- Never infer sound clarity, pacing, hesitation, stress, expression, phoneme accuracy or melody.
+- Summaries describe textual agreement and possible transcription differences only.
+- State that recognition errors can explain differences; they do not prove mispronunciation.
+- summary.rhythm must state that rhythm and intonation cannot be evaluated from this evidence.
+- Suggest rereading reference words for practice, without diagnosing sounds.
+- Return at most 6 weak points. Transcript must be the supplied transcript.
 
 CRITICAL:
 - Each weakPoints.word must be a SINGLE WORD only (no phrases).
@@ -126,10 +118,10 @@ ${transcriptText}`,
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  overall: { type: "number" },
-                  pronunciation: { type: "number" },
-                  fluency: { type: "number" },
-                  intonation: { type: "number" },
+                  overall: { type: "number", minimum: 0, maximum: 100 },
+                  pronunciation: { type: "number", minimum: 0, maximum: 100 },
+                  fluency: { type: "null" },
+                  intonation: { type: "null" },
                 },
                 required: [
                   "overall",
@@ -175,9 +167,22 @@ ${transcriptText}`,
 
     const parsed = JSON.parse(analysis.output_text);
 
+    const score = parsed?.score?.overall;
+    if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 100 || !Array.isArray(parsed?.weakPoints))
+      throw new Error("Invalid transcript comparison");
+    const referenceWords = new Set(text.match(/[\p{L}\p{M}]+(?:[’'-][\p{L}\p{M}]+)*/gu) ?? []);
+    const weakPoints = parsed.weakPoints.filter((point: { word?: unknown }) => typeof point?.word === "string" && referenceWords.has(point.word))
+      .slice(0, 6).map((point: { word: string }) => ({ word: point.word,
+        note: "Différence possible dans la transcription. Réécoutez et réessayez ; la reconnaissance vocale peut se tromper.", severity: "low" }));
     return NextResponse.json({
-      ...parsed,
-      debugVersion: "REAL-AI-ROUTE-V2-SCORED",
+      score: { overall: score, pronunciation: score, fluency: null, intonation: null },
+      summary: {
+        overall: "Comparaison indicative de la transcription avec le texte de référence.",
+        clarity: "Les différences de mots peuvent provenir de la reconnaissance vocale ; elles ne prouvent pas une erreur de prononciation.",
+        rhythm: "La fluidité et l’intonation ne sont pas mesurées.",
+        priority: weakPoints.length ? "Réécoutez les mots proposés, puis enregistrez un nouvel essai." : "Continuez à pratiquer en comparant votre lecture au modèle.",
+      },
+      weakPoints, transcript: transcriptText, evidence: "transcript-reference-comparison",
     });
   } catch (error) {
     console.error("analyze-pronunciation error:", error);

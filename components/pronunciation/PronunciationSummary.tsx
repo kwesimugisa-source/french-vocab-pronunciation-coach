@@ -14,11 +14,11 @@ export default function PronunciationSummary({ summary }: Props) {
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 border-b border-slate-100 pb-4">
         <h2 className="text-xl font-semibold text-slate-900">
-          Résumé de la prononciation
+          Retour sur la transcription
         </h2>
 
         <p className="mt-1 text-sm text-slate-500">
-          Cette section affichera une évaluation générale de votre lecture après l’analyse.
+          Comparaison indicative des mots transcrits avec le texte. Aucune mesure acoustique.
         </p>
       </div>
 
@@ -34,11 +34,11 @@ export default function PronunciationSummary({ summary }: Props) {
             </p>
 
             <p>
-              <strong>Clarté :</strong> {summary.clarity}
+              <strong>Limite :</strong> {summary.clarity}
             </p>
 
             <p>
-              <strong>Rythme :</strong> {summary.rhythm}
+              <strong>Non mesuré :</strong> {summary.rhythm}
             </p>
 
             <p>

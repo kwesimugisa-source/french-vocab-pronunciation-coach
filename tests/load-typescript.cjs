@@ -16,14 +16,14 @@ module.exports = function createLoader(overrides = {}) {
     cache.set(filename, loaded);
     loaded.require = (name) => {
       if (Object.hasOwn(overrides, name)) return overrides[name];
-      if (name.startsWith(".")) {
-        const resolved = path.resolve(path.dirname(filename), name);
-        return load(resolved.endsWith(".ts") ? resolved : `${resolved}.ts`);
+      if (name.startsWith(".") || name.startsWith("@/")) {
+        const resolved = name.startsWith("@/") ? path.resolve(name.slice(2)) : path.resolve(path.dirname(filename), name);
+        return load(/\.tsx?$/.test(resolved) ? resolved : fs.existsSync(`${resolved}.ts`) ? `${resolved}.ts` : `${resolved}.tsx`);
       }
       return require(name);
     };
     const compiled = ts.transpileModule(fs.readFileSync(filename, "utf8"), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true, jsx: ts.JsxEmit.ReactJSX },
       fileName: filename,
     });
     loaded._compile(compiled.outputText, filename);

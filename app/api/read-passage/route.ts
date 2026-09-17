@@ -3,26 +3,11 @@ import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/th
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
 
+import { detectContent } from "../../../lib/smart-import";
+import { isEffectiveType, MAX_TEXT_LENGTH, TTS_INPUT_LIMIT, validateIdentity } from "../../../lib/content-document";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function detectReadingMode(text: string) {
-  const lines = text.split("\n").map((line) => line.trim());
-
-  const dialogueLines = lines.filter((line) =>
-    /^.{1,40}?\s*[:：]\s*/.test(line)
-  );
-
-  const hasSpeakerLines = dialogueLines.length >= 2;
-
-  const stanzaCount = text.split("\n\n").length;
-  const lineCount = text.split("\n").filter((line) => line.trim()).length;
-
-  if (hasSpeakerLines) return "theatre";
-  if (stanzaCount >= 2 && lineCount >= 6) return "poetry";
-
-  return "standard";
-}
 
 async function speechToBase64({
   client,
@@ -37,6 +22,7 @@ async function speechToBase64({
   speed: number;
   instructions: string;
 }) {
+  if (text.length > TTS_INPUT_LIMIT) throw new Error("Réplique trop longue pour une requête audio.");
   const audioResponse = await client.audio.speech.create({
     model: "gpt-4o-mini-tts",
     voice,
@@ -59,11 +45,15 @@ export async function POST(req: Request) {
 
     const client = new OpenAI({ apiKey });
 
-    const { text, speed = "normal" } = await req.json();
-
-    if (!text) {
-      return new Response("Missing text", { status: 400 });
+    const body = await req.json();
+    if (!body || typeof body.text !== "string" || !body.text.trim() || body.text.length > MAX_TEXT_LENGTH ||
+      (body.contentType !== undefined && !isEffectiveType(body.contentType)))
+      return new Response("Texte ou type invalide.", { status: 400 });
+    if (body.documentId !== undefined || body.revision !== undefined) {
+      try { validateIdentity(body); } catch { return new Response("Identité du document invalide.", { status: 400 }); }
     }
+    const { text, speed = "normal" } = body;
+    if (!["very-slow", "slow", "normal", "fast"].includes(speed)) return new Response("Vitesse invalide.", { status: 400 });
 
     const speedMap: Record<string, number> = {
       "very-slow": 0.7,
@@ -73,7 +63,8 @@ export async function POST(req: Request) {
     };
 
     const playbackSpeed = speedMap[String(speed)] ?? 1.0;
-    const mode = detectReadingMode(text);
+    const type = body.contentType === undefined ? detectContent(text).contentType : body.contentType;
+    const mode = type === "theatre" ? "theatre" : type === "poetry" ? "poetry" : "standard";
 
     if (mode === "theatre") {
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
@@ -82,6 +73,8 @@ export async function POST(req: Request) {
       );
       return Response.json(scene);
     }
+    if (text.length > TTS_INPUT_LIMIT) return new Response(
+      `La lecture audio hors théâtre accepte au maximum ${TTS_INPUT_LIMIT} caractères. Importez un passage plus court pour l’écouter. Le texte affiché est conservé.`, { status: 413 });
     const audioResponse = await client.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
