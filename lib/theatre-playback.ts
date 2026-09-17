@@ -1,6 +1,8 @@
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip } from "./theatre";
 import { ChorusAudio } from "./chorus-audio";
+import { SynchronizedChorus } from "./synchronized-chorus";
+import type { ChorusContext, ChorusBufferCache } from "./synchronized-chorus";
 import { isChorusSpeaker } from "./theatre-speakers";
 
 export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
@@ -26,7 +28,7 @@ export type TheatrePlaybackSnapshot = {
 };
 
 // Narrow browser boundary allows deterministic media tests without a real device.
-export type GroupPosition = { time: number; ended: boolean }[];
+export type GroupPosition = { time: number; ended: boolean; delay?: number }[];
 export type PlaybackAudio = {
   volume?: number;
   loop?: boolean;
@@ -46,6 +48,7 @@ export type PlaybackAudio = {
   load(): void;
 };
 export type PlaybackEnvironment = {
+  createChorusContext?(): ChorusContext;
   createAudio(url: string): PlaybackAudio;
   createUrl(blob: Blob): string;
   revokeUrl(url: string): void;
@@ -54,6 +57,7 @@ export type PlaybackEnvironment = {
 };
 
 export const browserPlaybackEnvironment: PlaybackEnvironment = {
+  createChorusContext: () => new AudioContext(),
   createAudio: (url) => new Audio(url),
   createUrl: (blob) => URL.createObjectURL(blob),
   revokeUrl: (url) => URL.revokeObjectURL(url),
@@ -84,6 +88,7 @@ export class TheatrePlaybackController {
   private pausedMode: "playing" | "replaying" = "playing";
   private bookmark: { index: number; position: number | GroupPosition; status: PlaybackState } | null = null;
   private captureBlocked = false;
+  private chorusCache: ChorusBufferCache = new Map();
 
   constructor(private environment: PlaybackEnvironment = browserPlaybackEnvironment) {}
   setCaptureBlocked(blocked: boolean) { this.captureBlocked = blocked; if (blocked) this.pause(); }
@@ -119,6 +124,7 @@ export class TheatrePlaybackController {
 
   stop() {
     this.releaseAudio();
+    this.chorusCache.clear();
     this.bookmark = null;
     this.snapshot = initialSnapshot(this.snapshot.sessionId + 1);
     this.update({});
@@ -196,7 +202,9 @@ export class TheatrePlaybackController {
       ...(mode !== "practising" ? { currentIndex: index, currentItemId: item.id } : {}) });
     try {
       let audio: PlaybackAudio;
-      if (item.chorus) audio = new ChorusAudio(item.chorus.components, this.environment);
+      if (item.chorus) audio = this.environment.createChorusContext
+        ? new SynchronizedChorus(item.chorus.components, this.environment, this.chorusCache)
+        : new ChorusAudio(item.chorus.components, this.environment);
       else {
         const bytes = Uint8Array.from(atob(item.audioBase64), (char) => char.charCodeAt(0));
         this.url = this.environment.createUrl(new Blob([bytes], { type: "audio/mpeg" }));

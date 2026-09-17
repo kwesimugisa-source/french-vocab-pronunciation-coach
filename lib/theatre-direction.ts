@@ -157,7 +157,7 @@ export function dramaticInstructions(item: TheatreItem, analysis: DramaticAnalys
   const roleDirection = role === "narrator"
     ? "Narrate the stage direction in a lower, composed register: clear, theatrical but unobtrusive. Do not impersonate the characters or exaggerate emotion."
     : role === "chorus"
-      ? "Perform the chorus as one clear voice with a collective dramatic intention. No overlapping voices, singing or added sounds."
+      ? "Perform the chorus as one clear voice with a collective dramatic intention. No overlapping voices, singing or added sounds. This recording is one member of a three-voice spoken ensemble. Begin promptly; use steady, even articulation and brief, consistent punctuation pauses. Avoid dramatic stretching, hesitation, ad-lib breaths and long introductory or final pauses. Keep your distinct natural voice; do not imitate another speaker."
       : "Perform this character naturally and consistently, with restrained theatrical expression and clear French diction.";
   const annotation = analysis?.items[item.index];
   return [
