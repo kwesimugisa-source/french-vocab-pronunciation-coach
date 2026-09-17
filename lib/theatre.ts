@@ -24,6 +24,8 @@ export type TheatreClip = TheatreItem & {
 
 export type TheatreResponse = {
   mode: "theatre";
+  /** Opaque reference to an ephemeral server-only plan. No dramatic summaries. */
+  analysisCacheKey?: string;
   ambience?: import("./theatre-ambience").AmbienceRecommendation;
   /** Advisory generation metadata only; never used as playback state. */
   direction?: import("./theatre-direction").DirectionMetadata;

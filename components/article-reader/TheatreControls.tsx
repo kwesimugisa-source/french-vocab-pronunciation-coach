@@ -1,11 +1,11 @@
 import { canPractise } from "@/lib/theatre-playback";
 import type { TheatrePlaybackSnapshot } from "@/lib/theatre-playback";
 import type { AmbienceLevel } from "@/lib/ambience-playback";
-import type { AmbienceKind } from "@/lib/theatre-ambience";
-import { ambienceDescription, hasLocalAmbienceProvider } from "@/lib/theatre-ambience";
+import type { AmbienceKind, AmbienceStatus } from "@/lib/theatre-ambience";
+import { ambienceDescription, ambienceStatusDescription, hasLocalAmbienceProvider } from "@/lib/theatre-ambience";
 
 type Props = {
-  ambience?: { environment: AmbienceKind; level: AmbienceLevel };
+  ambience?: { environment: AmbienceKind; level: AmbienceLevel; status?: AmbienceStatus };
   onAmbienceChange?: (level: AmbienceLevel) => void;
   playback: TheatrePlaybackSnapshot;
   recordingBusy: boolean;
@@ -37,11 +37,12 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
           onChange={(event) => onAmbienceChange?.(event.target.value as AmbienceLevel)}>
           <option value="off">Désactivée</option><option value="low">Faible</option><option value="medium">Modérée</option>
         </select>
-        <span className="text-slate-600">{ambienceDescription(ambience.environment)}</span>
+        <span className="text-slate-600">{ambience.status ? ambienceStatusDescription(ambience.status, ambience.environment) : ambienceDescription(ambience.environment)}</span>
       </div>}
       <p role="status" className="mt-1 text-sm text-slate-600">
         {labels[playback.status]}{current ? ` — élément ${playback.currentIndex + 1} sur ${playback.queue.length}` : ""}
       </p>
+      {!!playback.queue.length && <p className="text-xs text-slate-600">{playback.completions.length} / {playback.queue.length} éléments terminés</p>}
       {current && !practice && <p className="mt-3 whitespace-pre-line"><strong>{current.speaker} : </strong>{current.text}</p>}
       {playback.error && <p role="alert" className="mt-3 text-sm text-red-700">
         {playback.error.message} {playback.error.itemId && `Élément ${playback.error.index + 1} (${playback.error.itemId}).`}

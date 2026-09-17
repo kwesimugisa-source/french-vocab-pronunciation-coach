@@ -4,7 +4,8 @@ import { createTheatreCasting, theatreRole } from "./theatre-casting";
 import type { TheatreVoice } from "./theatre-casting";
 import { dramaticInstructions, prepareDramaticDirection } from "./theatre-direction";
 import type { SceneAnalyzer } from "./theatre-direction";
-import { noAmbience } from "./theatre-ambience";
+import { noAmbience, validateAmbience } from "./theatre-ambience";
+import { theatreAnalysisCache } from "./theatre-analysis-cache";
 
 // Three workers keep service pressure modest while avoiding fully serial TTS.
 // This bounds requests per scene, not aggregate traffic from multiple users.
@@ -30,11 +31,16 @@ export async function generateTheatreResponse(
   text: string,
   playbackSpeed: number,
   synthesize: (input: SpeechInput) => Promise<string>,
-  options: { analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number } = {}
+  options: { analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean } = {}
 ): Promise<TheatreResponse> {
   const items = parseTheatreItems(text);
   const casting = createTheatreCasting(items, options.narratorVoice);
-  const { analysis, metadata: direction } = await prepareDramaticDirection(items, options.analyze, options.analysisTimeoutMs);
+  const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text);
+  const prior = validateAmbience(options.ambienceDecision, items);
+  const ambienceDecision = prior.confidence === "high" ? prior : undefined;
+  const { analysis, metadata: direction } = await prepareDramaticDirection(items,
+    reuse ? async () => reuse : options.skipAnalysis ? undefined : options.analyze, options.analysisTimeoutMs, ambienceDecision);
+  if (analysis && ambienceDecision) analysis.ambience = ambienceDecision;
   // Casting and complete validated direction are fixed before concurrent TTS.
   const jobs = items.flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
     [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
@@ -84,8 +90,9 @@ export async function generateTheatreResponse(
   const response: TheatreResponse = {
     mode: "theatre",
     direction,
+    ...(analysis ? { analysisCacheKey: theatreAnalysisCache.put(text, analysis) } : {}),
     casting,
-    ambience: analysis?.ambience ?? noAmbience(),
+    ambience: ambienceDecision ?? analysis?.ambience ?? noAmbience(),
     integrity: {
       version: 1,
       parsedItemCount: items.length,

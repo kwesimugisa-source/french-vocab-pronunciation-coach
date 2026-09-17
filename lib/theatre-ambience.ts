@@ -11,6 +11,18 @@ export const AMBIENCE_CATALOGUE = {
   harbour_ship: "Port ou navire", rural_village: "Village rural",
 } as const;
 export type AmbienceKind = keyof typeof AMBIENCE_CATALOGUE;
+export type AmbienceStatus = "analyzed_no_ambience" | "detected_available" | "detected_unavailable" | "analysis_unavailable" | "playback_failed";
+export function ambienceStatus(recommendation: AmbienceRecommendation, analyzed: boolean): AmbienceStatus {
+  if (recommendation.environment !== "none") return hasLocalAmbienceProvider(recommendation.environment) ? "detected_available" : "detected_unavailable";
+  return analyzed && recommendation.confidence === "high" ? "analyzed_no_ambience" : "analysis_unavailable";
+}
+export function ambienceStatusDescription(status: AmbienceStatus, kind: AmbienceKind): string {
+  if (status === "analyzed_no_ambience") return "Aucune ambiance nécessaire pour cette scène.";
+  if (status === "analysis_unavailable") return "Analyse de l’ambiance indisponible ou incertaine.";
+  if (status === "playback_failed") return "Impossible de lire l’ambiance. La lecture du texte continue.";
+  if (status === "detected_unavailable") return `Ambiance détectée : ${AMBIENCE_CATALOGUE[kind].toLocaleLowerCase("fr")}, mais aucun son n’est disponible.`;
+  return `Ambiance : ${AMBIENCE_CATALOGUE[kind].toLocaleLowerCase("fr")} — suspendue pendant l’enregistrement.`;
+}
 type Evidence = { itemId: string; quote: string };
 export type AmbienceRecommendation = {
   environment: AmbienceKind; evidenceItemId?: string; evidenceQuote?: string;
@@ -39,6 +51,11 @@ export function validateAmbience(value: unknown, items: readonly TheatreItem[]):
   const data = value as Record<string, unknown>;
   if (Object.hasOwn(data, "basis")) {
     const keys = ["environment", "confidence", "basis", "evidence", "rationale", "contradictory"];
+    if (Object.keys(data).length === keys.length && keys.every(key => Object.hasOwn(data,key)) &&
+      data.environment === "none" && data.confidence === "high" && data.contradictory === false &&
+      ["explicit", "contextual"].includes(data.basis as string) && Array.isArray(data.evidence) && !data.evidence.length &&
+      typeof data.rationale === "string" && !!data.rationale.trim() && data.rationale.length <= 400)
+      return { environment:"none",confidence:"high",basis:data.basis as "explicit" | "contextual",evidence:[],rationale:data.rationale,contradictory:false };
     if (Object.keys(data).length !== keys.length || !keys.every(key => Object.hasOwn(data, key)) ||
       typeof data.environment !== "string" || !Object.hasOwn(AMBIENCE_CATALOGUE, data.environment) ||
       data.environment === "none" || data.confidence !== "high" || data.contradictory !== false ||
@@ -76,7 +93,7 @@ export function validateAmbience(value: unknown, items: readonly TheatreItem[]):
 export type AmbienceProvider = (kind: AmbienceKind) => Blob | null;
 /** Original procedural demonstration, no external recordings/licensing or API.
  * A quiet filtered noise bed, not a realistic production sound library. */
-function localNoise(kind: "rain" | "room"): Blob {
+function localNoise(kind: "rain" | "room" | "office"): Blob {
   const rate = 16000, samples = rate * 4;
   const bytes = new Uint8Array(44 + samples * 2), view = new DataView(bytes.buffer);
   const label = (offset: number, text: string) => [...text].forEach((c, i) => { bytes[offset + i] = c.charCodeAt(0); });
@@ -89,14 +106,19 @@ function localNoise(kind: "rain" | "room"): Blob {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     smooth = smooth * 0.65 + (seed / 0xffffffff * 2 - 1) * 0.35;
     const fade = Math.min(1, i / 800, (samples - 1 - i) / 800);
-    const sample = kind === "rain" ? smooth * 7000 : smooth * 900 + Math.sin(i * 2 * Math.PI * 100 / rate) * 180;
+    const t = i / rate;
+    // Office: a fuller ventilation bed plus soft periodic mechanical texture.
+    // No voices, identifiable recordings, startling transients or licensed assets.
+    const office = smooth * (9000 + 1800 * Math.sin(2*Math.PI*0.5*t)) +
+      Math.sin(2*Math.PI*120*t) * 900 + Math.sin(2*Math.PI*240*t) * 350;
+    const sample = kind === "office" ? office : kind === "rain" ? smooth * 7000 : smooth * 900 + Math.sin(i * 2 * Math.PI * 100 / rate) * 180;
     view.setInt16(44 + i * 2, Math.round(sample * fade), true);
   }
   return new Blob([bytes], { type: "audio/wav" });
 }
 // Only appropriate base beds. No phones, speech, printers or one-shot effects.
 const localProviders: Partial<Record<AmbienceKind, () => Blob>> = {
-  rain: () => localNoise("rain"), neutral_room: () => localNoise("room"), office: () => localNoise("room"),
+  rain: () => localNoise("rain"), neutral_room: () => localNoise("room"), office: () => localNoise("office"),
 };
 export const hasLocalAmbienceProvider = (kind: AmbienceKind): boolean => Object.hasOwn(localProviders, kind);
 export const localAmbienceProvider: AmbienceProvider = kind => hasLocalAmbienceProvider(kind) ? localProviders[kind]!() : null;

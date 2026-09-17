@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
@@ -25,24 +26,24 @@ async function speechToBase64({
   instructions: string;
 }) {
   if (text.length > TTS_INPUT_LIMIT) throw new Error("Réplique trop longue pour une requête audio.");
-  const audioResponse = await client.audio.speech.create({
+  const audioResponse = await providerCall("tts", () => client.audio.speech.create({
     model: "gpt-4o-mini-tts",
     voice,
     input: text,
     speed,
     instructions,
-  });
+  }), text.length);
 
   const buffer = Buffer.from(await audioResponse.arrayBuffer());
   return buffer.toString("base64");
 }
 
-export async function POST(req: Request) {
+async function handlePost(req: Request) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
-      return new Response("Missing API key", { status: 500 });
+      return new Response("Service audio indisponible. Réessayez plus tard.", { status: 500 });
     }
 
     const client = new OpenAI({ apiKey });
@@ -85,18 +86,18 @@ export async function POST(req: Request) {
     if (mode === "theatre") {
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
         speechToBase64({ client, ...input }),
-        { analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens) }
+        { analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       return Response.json(scene);
     }
     if (text.length > TTS_INPUT_LIMIT) return new Response(
       `La lecture audio hors théâtre accepte au maximum ${TTS_INPUT_LIMIT} caractères. Importez un passage plus court pour l’écouter. Le texte affiché est conservé.`, { status: 413 });
-    const audioResponse = await client.audio.speech.create({
+    const audioResponse = await providerCall("tts", () => client.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
       input: text,
       speed: playbackSpeed,
-    });
+    }), text.length);
 
     const buffer = await audioResponse.arrayBuffer();
 
@@ -119,7 +120,7 @@ export async function POST(req: Request) {
         },
       }, { status: 500 });
     }
-    console.error("read-passage error:", error);
-    return new Response("Error generating audio", { status: 500 });
+    return new Response("Impossible de préparer la lecture. Réessayez.", { status: 500 });
   }
 }
+export const POST = protectedRoute("reading", handlePost);

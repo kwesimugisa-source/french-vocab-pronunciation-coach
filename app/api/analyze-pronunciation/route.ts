@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -8,36 +9,37 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-export async function POST(req: Request) {
+async function handlePost(req: Request) {
   try {
     const formData = await req.formData();
 
     const audio = formData.get("audio");
     const text = formData.get("text");
 
-    if (!(audio instanceof File)) {
+    if (!(audio instanceof File) || audio.size === 0 || audio.size > 9_000_000) {
       return NextResponse.json(
-        { error: "Missing audio file." },
+        { code:"INVALID_INPUT", error: "Enregistrement absent ou trop volumineux (9 Mo maximum)." },
         { status: 400 }
       );
     }
 
-    if (typeof text !== "string" || !text.trim()) {
+    if (typeof text !== "string" || !text.trim() || text.length > 60000) {
       return NextResponse.json(
-        { error: "Missing reference text." },
+        { code:"INVALID_INPUT", error: "Texte de référence absent ou trop long." },
         { status: 400 }
       );
     }
 
-    const transcript = await client.audio.transcriptions.create({
+    const transcript = await providerCall("transcription", () => client.audio.transcriptions.create({
       file: audio,
       model: "gpt-4o-mini-transcribe",
-    });
+    }));
 
     const transcriptText = transcript.text?.trim() || "";
 
-    const analysis = await client.responses.create({
+    const analysis = await providerCall("pronunciation", () => client.responses.create({
       model: "gpt-5.4-mini",
+      store:false,
       input: [
         {
           role: "system",
@@ -163,7 +165,7 @@ ${transcriptText}`,
           },
         },
       },
-    });
+    }));
 
     const parsed = JSON.parse(analysis.output_text);
 
@@ -185,10 +187,10 @@ ${transcriptText}`,
       weakPoints, transcript: transcriptText, evidence: "transcript-reference-comparison",
     });
   } catch (error) {
-    console.error("analyze-pronunciation error:", error);
     return NextResponse.json(
-      { error: "Failed to analyze pronunciation." },
+      { code:"PROVIDER_FAILED", error: "Impossible d’analyser la prononciation. Réessayez." },
       { status: 500 }
     );
   }
 }
+export const POST = protectedRoute("pronunciation", handlePost);

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const createLoader = require("./load-typescript.cjs");
 const { load, setup, deferred, flush } = require("./playback-fixtures.cjs");
 const { PronunciationSession } = load("lib/pronunciation-session.ts");
+const { betaJournal, resetBetaDiagnostics } = load("lib/beta-events.ts");
 
 const feedback = {
   score: { overall: 80, pronunciation: 81, fluency: 82, intonation: 83 },
@@ -33,6 +34,38 @@ function recordingEnvironment(fetch = async () => Response.json(feedback)) {
     },
   };
 }
+
+test("CP4.4 recording attempts/retries and analysis preparation use metadata only",async()=>{
+  resetBetaDiagnostics(); const pending=deferred(), env=recordingEnvironment(()=>pending.promise), s=new PronunciationSession(env);
+  const target={text:"SENSITIVE",documentId:"practice-document",revision:2,itemId:"line-2",contentType:"theatre",origin:"imported"};
+  assert.equal(env.streams.length,0); await s.start(target); s.stop(); await s.start(target); s.stop();
+  const analyze=s.analyze(); assert.ok(s.preparation.getSnapshot()); assert.equal(s.getSnapshot().status,"analyzing");
+  pending.resolve(Response.json(feedback)); await analyze; assert.equal(s.preparation.getSnapshot(),null);
+  const all=betaJournal.inspect(); assert.equal(all.filter(e=>e.name==="pronunciation_attempt" && e.status==="started").length,2);
+  assert.equal(all.filter(e=>e.name==="pronunciation_retry").length,1);
+  assert.equal(all.filter(e=>e.name==="operation"&&e.status==="completed").length,1);
+  assert.ok(all.every(e=>e.contentType==="theatre" && e.revision===2)); assert.doesNotMatch(JSON.stringify(all),/SENSITIVE|Bonjour|recorded speech/);
+  s.dispose(); assert.ok(env.streams.every(stream=>stream.getTracks()[0].stopped));
+});
+
+test("CP4.4 cancelled pronunciation analysis cannot complete newer preparation or report old errors",async()=>{
+  resetBetaDiagnostics(); const pending=[deferred(),deferred()]; let calls=0;
+  const s=new PronunciationSession(recordingEnvironment(()=>pending[calls++].promise));
+  await s.start({text:"Old",documentId:"old",revision:1}); s.stop(); const old=s.analyze(); s.reset();
+  await s.start({text:"New",documentId:"new",revision:2}); s.stop(); const current=s.analyze();
+  pending[0].resolve(new Response("SENSITIVE",{status:500})); await old; assert.equal(s.preparation.getSnapshot().revision,2);
+  pending[1].resolve(new Response("SENSITIVE",{status:429})); await current;
+  assert.equal(s.preparation.getSnapshot(),null); assert.match(s.getSnapshot().error,/Trop de demandes/);
+  assert.equal(betaJournal.inspect().filter(e=>e.name==="operation"&&e.status==="completed").length,0);
+  assert.equal(betaJournal.inspect().at(-1).code,"RATE_LIMITED"); s.dispose();
+});
+
+test("CP4.4 missing recorder capability releases microphone and reports a safe category",async()=>{
+  resetBetaDiagnostics(); const env=recordingEnvironment(); env.createRecorder=()=>{throw Error("SENSITIVE");};
+  const s=new PronunciationSession(env); await s.start({text:"Fixture"});
+  assert.equal(s.getSnapshot().status,"error"); assert.doesNotMatch(s.getSnapshot().error,/SENSITIVE/);
+  assert.ok(env.streams[0].getTracks()[0].stopped); assert.equal(betaJournal.inspect().at(-1).code,"MICROPHONE_UNAVAILABLE"); s.dispose();
+});
 
 test("repeated réplique recordings use the EXISTING pronunciation route, reference prompt and feedback", async () => {
   const transcriptionCalls = [], analysisCalls = [], requests = [];

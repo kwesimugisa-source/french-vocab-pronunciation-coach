@@ -15,7 +15,8 @@ export class AmbiencePlayback {
   private running = false;
   private failed = false;
   private epoch = 0;
-  constructor(private env: PlaybackEnvironment, private provider: AmbienceProvider = localAmbienceProvider) {}
+  constructor(private env: PlaybackEnvironment, private provider: AmbienceProvider = localAmbienceProvider,
+    private onFailure: () => void = () => {}, private onPlaying: () => void = () => {}) {}
   configure(kind: AmbienceKind) { this.release(); this.kind = kind; this.failed = false; this.sync(); }
   setLevel(level: AmbienceLevel) {
     if (!(level in volume)) return;
@@ -39,7 +40,7 @@ export class AmbiencePlayback {
     try {
       if (!this.audio) {
         const blob = this.provider(this.kind);
-        if (!blob) { this.failed = true; return; }
+        if (!blob) { this.fail(); return; }
         this.url = this.env.createUrl(blob); this.audio = this.env.createAudio(this.url);
         this.audio.loop = true;
         const audio = this.audio;
@@ -49,10 +50,10 @@ export class AmbiencePlayback {
       if (this.running) return;
       const epoch = ++this.epoch;
       this.running = true;
-      void this.audio.play().catch(() => { if (epoch === this.epoch) this.fail(); });
+      void this.audio.play().then(() => { if(epoch===this.epoch) this.onPlaying(); }).catch(() => { if (epoch === this.epoch) this.fail(); });
     } catch { this.fail(); }
   }
-  private fail() { this.failed = true; this.release(); }
+  private fail() { this.failed = true; this.release(); this.onFailure(); }
   private release() {
     this.epoch++; this.running = false;
     if (this.audio) {

@@ -9,7 +9,7 @@ export class ConversationPlayback {
   private audio: PlaybackAudio | null = null;
   private url: string | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private snapshot = { busy: false, playedIds: [] as string[], error: null as string | null };
+  private snapshot = { busy: false, preparing:false, playedIds: [] as string[], error: null as string | null };
   constructor(private env: PlaybackEnvironment, private changed: () => void) {}
   getSnapshot = () => this.snapshot;
   private update(patch: Partial<typeof this.snapshot>) { this.snapshot = { ...this.snapshot, ...patch }; this.changed(); }
@@ -23,21 +23,22 @@ export class ConversationPlayback {
     if (this.url) this.env.revokeUrl(this.url);
     this.url = null;
   }
-  stop() { this.epoch++; this.release(); this.update({ busy: false, playedIds: [], error: null }); }
+  stop() { this.epoch++; this.release(); this.update({ busy: false, preparing:false, playedIds: [], error: null }); }
   accept(value: unknown, text: string, speed: number) {
     assertConversationResponse(value, text, speed);
     this.stop();
     const epoch = this.epoch, clips = value.clips;
-    this.update({ busy: true });
+    this.update({ busy: true, preparing:true });
     this.play(clips, 0, epoch);
   }
   private play(clips: ConversationClip[], index: number, epoch: number) {
     if (epoch !== this.epoch) return;
-    if (index === clips.length) { this.update({ busy: false }); return; }
+    if (index === clips.length) { this.update({ busy: false, preparing:false }); return; }
+    this.update({preparing:true});
     const fail = () => {
       if (epoch !== this.epoch) return;
       this.epoch++; this.release();
-      this.update({ busy: false, error: `Erreur audio au tour ${index + 1}. La conversation est arrêtée ; relancez la lecture pour réessayer.` });
+      this.update({ busy: false, preparing:false, error: `Erreur audio au tour ${index + 1}. La conversation est arrêtée ; relancez la lecture pour réessayer.` });
     };
     try {
       const clip = clips[index];
@@ -59,7 +60,7 @@ export class ConversationPlayback {
         this.play(clips, index + 1, epoch);
       };
       arm();
-      void audio.play().catch(() => { if (current()) fail(); });
+      void audio.play().then(() => { if(current()) this.update({preparing:false}); }).catch(() => { if (current()) fail(); });
     } catch { fail(); }
   }
 }

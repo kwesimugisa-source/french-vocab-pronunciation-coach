@@ -1,5 +1,6 @@
 import { isEffectiveType, LEVELS, validateIdentity } from "../../../lib/content-document";
 import OpenAI from "openai";
+import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -14,13 +15,13 @@ type AnalyzeWordRequest = {
   contentType?: string;
 };
 
-export async function POST(req: Request) {
+async function handlePost(req: Request) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Missing OPENAI_API_KEY." },
+        { error: "Service d’analyse indisponible." },
         { status: 500 }
       );
     }
@@ -41,8 +42,9 @@ export async function POST(req: Request) {
     const level = body.level;
     const contentType = body.contentType;
 
-    const response = await client.responses.create({
+    const response = await providerCall("vocabulary", () => client.responses.create({
       model: "gpt-5.4-mini",
+      store:false,
       input: [
         {
           role: "system",
@@ -138,16 +140,16 @@ Content type: ${contentType}`,
           },
         },
       },
-    });
+    }));
 
     const parsed = JSON.parse(response.output_text);
 
     return NextResponse.json(parsed);
   } catch (error) {
-    console.error("analyze-word error:", error);
     return NextResponse.json(
-      { error: "Failed to analyze word." },
+      { code:"PROVIDER_FAILED", error: "Impossible d’analyser ce mot. Réessayez." },
       { status: 500 }
     );
   }
 }
+export const POST = protectedRoute("vocabulary", handlePost);

@@ -1,4 +1,7 @@
 import type { PronunciationIssue } from "./types";
+import { Preparation } from "./preparation";
+import { betaContext, betaHeaders, betaJournal } from "./beta-events";
+import { requestError } from "./safe-errors";
 
 export type PronunciationTarget = {
   text: string;
@@ -7,6 +10,9 @@ export type PronunciationTarget = {
   itemId?: string;
   speaker?: string;
   sessionId?: number;
+  contentType?: import("./content-document").EffectiveType;
+  origin?: "generated" | "imported";
+  level?: string;
 };
 export type PronunciationFeedback = {
   summary: { overall: string; clarity: string; rhythm: string; priority: string } | null;
@@ -40,6 +46,7 @@ const emptySnapshot = (): PronunciationSnapshot => ({
  * transcription, missed-word analysis and scoring remain on the existing route.
  */
 export class PronunciationSession {
+  readonly preparation = new Preparation();
   private snapshot = emptySnapshot();
   private listeners = new Set<() => void>();
   private epoch = 0;
@@ -72,6 +79,7 @@ export class PronunciationSession {
     this.releaseCapture = null;
   }
   reset() {
+    this.preparation.cancel();
     this.epoch++;
     this.analysis?.abort();
     this.analysis = null;
@@ -86,6 +94,9 @@ export class PronunciationSession {
 
   async start(target: PronunciationTarget) {
     if (this.isBusy()) return;
+    const retry=!!this.snapshot.recording && this.snapshot.target?.documentId===target.documentId && this.snapshot.target?.revision===target.revision && this.snapshot.target?.itemId===target.itemId;
+    betaJournal.emit({...betaContext(target),name:"pronunciation_attempt",status:"started"});
+    if (retry) betaJournal.emit({...betaContext(target),name:"pronunciation_retry",status:"started"});
     this.reset();
     const epoch = this.epoch;
     const capturedTarget = { ...target };
@@ -109,6 +120,7 @@ export class PronunciationSession {
       };
       recorder.onerror = () => {
         if (epoch !== this.epoch) return;
+        betaJournal.emit({...betaContext(capturedTarget),name:"pronunciation_attempt",status:"failed",code:"MICROPHONE_UNAVAILABLE"});
         this.epoch++;
         this.releaseRecorder();
         this.update({ status: "error", error: "Impossible de terminer l’enregistrement." });
@@ -117,6 +129,7 @@ export class PronunciationSession {
       this.update({ status: "recording" });
     } catch {
       if (epoch !== this.epoch) return;
+      betaJournal.emit({...betaContext(capturedTarget),name:"pronunciation_attempt",status:"failed",code:"MICROPHONE_UNAVAILABLE"});
       this.releaseRecorder();
       this.update({ status: "error", error: "Impossible d’accéder au microphone." });
     }
@@ -131,9 +144,11 @@ export class PronunciationSession {
     if (!recording || this.isBusy()) return;
     const epoch = this.epoch;
     const analysis = new AbortController();
+    const preparationId=this.preparation.begin("pronunciation",betaContext(recording.target));
     this.analysis = analysis;
     this.update({ status: "analyzing", error: null });
     const formData = new FormData();
+    let failureMessage=requestError(500,"pronunciation"), failureCode: "RATE_LIMITED" | "PROVIDER_FAILED"="PROVIDER_FAILED";
     formData.append("audio", recording.blob, "reading.webm");
     formData.append("text", recording.target.text);
     if (recording.target.itemId) formData.append("itemId", recording.target.itemId);
@@ -141,18 +156,20 @@ export class PronunciationSession {
     if (recording.target.sessionId !== undefined) formData.append("sessionId", String(recording.target.sessionId));
     try {
       const response = await this.environment.fetch("/api/analyze-pronunciation", {
-        method: "POST", body: formData, signal: analysis.signal,
+        method: "POST", body: formData, signal: analysis.signal,headers:betaHeaders(),
       });
       if (epoch !== this.epoch || analysis.signal.aborted) return;
-      if (!response.ok) throw new Error("Analysis failed");
+      if (!response.ok) { failureMessage=requestError(response.status,"pronunciation"); if(response.status===429) failureCode="RATE_LIMITED"; throw new Error("Analysis failed"); }
       const data: PronunciationFeedback = await response.json();
       if (epoch !== this.epoch || analysis.signal.aborted) return;
+      this.preparation.finish(preparationId,"completed");
       this.update({ status: "analyzed", feedback: {
         ...data, summary: data.summary ?? null, score: data.score ?? null, weakPoints: data.weakPoints ?? [],
       } });
     } catch {
       if (epoch === this.epoch && !analysis.signal.aborted) {
-        this.update({ status: "error", error: "Impossible d’analyser la prononciation. Réessayez." });
+        this.preparation.finish(preparationId,"failed",failureCode);
+        this.update({ status: "error", error: failureMessage });
       }
     } finally {
       if (this.analysis === analysis) this.analysis = null;

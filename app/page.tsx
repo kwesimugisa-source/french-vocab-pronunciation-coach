@@ -7,6 +7,10 @@ import { soundTarget } from "@/lib/tongue-twisters";
 import TongueTwisterPractice from "@/components/article-reader/TongueTwisterPractice";
 import { PronunciationSession } from "@/lib/pronunciation-session";
 import { conversationReference } from "@/lib/conversation";
+import PreparationNotice from "@/components/article-reader/PreparationNotice";
+import { Preparation } from "@/lib/preparation";
+import { betaContext, betaHeaders, betaJournal } from "@/lib/beta-events";
+import BetaDiagnostics from "@/components/BetaDiagnostics";
 import { CONTENT_LABELS, CONTENT_TYPES, ContentDocument, EffectiveType, generatedDocument, validateDocument } from "@/lib/content-document";
 import { importDocument } from "@/lib/smart-import";
 import { VocabularySession, sentenceAt } from "@/lib/vocabulary-session";
@@ -41,6 +45,9 @@ function normalizeWord(word: string) {
 
 export default function Page() {
   const [vocabulary] = useState(() => new VocabularySession());
+  const vocabularyPending = useSyncExternalStore(vocabulary.preparation.subscribe, vocabulary.preparation.getSnapshot, vocabulary.preparation.getSnapshot);
+  const [generationPreparation] = useState(() => new Preparation());
+  const generationPending = useSyncExternalStore(generationPreparation.subscribe, generationPreparation.getSnapshot, generationPreparation.getSnapshot);
   const [selectedOffset, setSelectedOffset] = useState(0);
   const [selectedWord, setSelectedWord] = useState<WordInsight | null>(null);
   const [selectedWordKey, setSelectedWordKey] = useState<string | null>(null);
@@ -62,7 +69,7 @@ export default function Page() {
   const [readingSpeed, setReadingSpeed] = useState("normal");
 
   const [article, setArticle] = useState<ContentDocument>(() => generatedDocument(initialArticle, "news", "B1", "demo"));
-  const [isGenerating, setIsGenerating] = useState(false);
+  const isGenerating = !!generationPending;
 
   const [showImportBox, setShowImportBox] = useState(false);
   const [importedText, setImportedText] = useState("");
@@ -89,6 +96,7 @@ export default function Page() {
 
   useEffect(() => () => {
     articleRequest.current?.abort();
+    generationPreparation.cancel();
     vocabulary.cancel();
     playback.stop();
     pronunciation.reset();
@@ -136,12 +144,14 @@ export default function Page() {
     catch (error) { alert(error instanceof Error ? error.message : "Import impossible."); return; }
     articleRequest.current?.abort();
     articleRequest.current = null;
-    setIsGenerating(false);
+    generationPreparation.cancel();
     playback.stop();
     pronunciation.reset();
     vocabulary.cancel();
     practice.clear();
+    playback.invalidateDocument?.();
     setArticle(document);
+    betaJournal.emit({...betaContext(document),name:"document_imported"});
 
     setSelectedWord(null);
     setSelectedWordKey(null);
@@ -165,9 +175,11 @@ export default function Page() {
     if (article.origin !== "imported") return;
     try {
       const document = importDocument(article.originalText, article.documentId, type, article.revision + 1);
-      articleRequest.current?.abort(); articleRequest.current = null; setIsGenerating(false);
+      articleRequest.current?.abort(); articleRequest.current = null; generationPreparation.cancel();
       playback.stop(); pronunciation.reset(); vocabulary.cancel();
       setSelectedWord(null); setSelectedWordKey(null); practice.clear(); setArticle(document);
+      playback.invalidateDocument?.();
+      betaJournal.emit({...betaContext(document),name:"document_reinterpreted"});
     } catch { alert("Impossible de réinterpréter ce texte."); }
   }
 
@@ -190,6 +202,7 @@ export default function Page() {
   function handlePractise(itemId: string) {
     if (pronunciation.isBusy()) return;
     if (playback.theatre.enterPractice(itemId)) {
+      betaJournal.emit({...betaContext(article,readingSpeed),name:"theatre_practice",status:"started"});
       pronunciation.reset();
       vocabulary.cancel();
       setSelectedWord(null);
@@ -207,7 +220,7 @@ export default function Page() {
   }
 
   function handleReplay() {
-    if (!pronunciation.isBusy()) playback.theatre.replay();
+    if (!pronunciation.isBusy()) { playback.theatre.replay(); betaJournal.emit({...betaContext(article,readingSpeed),name:"theatre_replay",status:"started"}); }
   }
 
   function handleStartReading() {
@@ -219,31 +232,33 @@ export default function Page() {
     const target = playback.theatre.getSnapshot().practiceTarget;
     void pronunciation.start(target ? {
       documentId: article.documentId, revision: article.revision, text: target.text, itemId: target.itemId,
-      speaker: target.speaker, sessionId: target.sessionId,
-    } : { text: referenceText, documentId: article.documentId, revision: article.revision });
+      speaker: target.speaker, sessionId: target.sessionId, contentType:article.contentType,origin:article.origin,level:article.level,
+    } : { text: referenceText, documentId: article.documentId, revision: article.revision, contentType:article.contentType,origin:article.origin,level:article.level });
   }
 
   function handleStopReading() { pronunciation.stop(); }
   function handleAnalyzePronunciation() { void pronunciation.analyze(); }
   async function handleGenerateArticle() {
+    if(articleRequest.current) return;
     let target;
     try { target = contentType === "tongue-twisters" ? soundTarget({ id: targetSoundId, label: customSound }) : undefined; }
     catch (error) { alert(error instanceof Error ? error.message : "Son invalide."); return; }
-    articleRequest.current?.abort();
     const request = new AbortController();
     articleRequest.current = request;
+    const operationId=generationPreparation.begin("generation",{...betaContext(article),contentType:contentType as ContentDocument["contentType"],level:level as "A1"});
+    let generationErrorCode: "RATE_LIMITED" | "PROVIDER_FAILED" = "PROVIDER_FAILED";
     vocabulary.cancel();
     setSelectedWord(null); setSelectedWordKey(null);
     playback.stop();
     pronunciation.reset();
     try {
-      setIsGenerating(true);
 
       const response = await fetch("/api/generate-article", {
         signal: request.signal,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...betaHeaders(),
         },
         body: JSON.stringify({
           contentType,
@@ -254,6 +269,7 @@ export default function Page() {
       });
 
       if (!response.ok) {
+        if(response.status===429) { generationErrorCode="RATE_LIMITED"; throw new Error("Trop de demandes rapprochées. Patientez quelques instants, puis réessayez."); }
         throw new Error("Échec de la génération du texte.");
       }
 
@@ -269,7 +285,10 @@ export default function Page() {
       if (target && JSON.stringify(data.tongueTwisters?.target) !== JSON.stringify(target)) throw new Error("Son généré incompatible.");
       vocabulary.cancel();
       practice.clear();
+      playback.invalidateDocument?.();
       setArticle(data);
+      generationPreparation.finish(operationId,"completed");
+      betaJournal.emit({...betaContext(data),name:"document_created"});
 
       setSelectedWord(null);
       setSelectedWordKey(null);
@@ -277,18 +296,21 @@ export default function Page() {
       setPronunciationScore(null);
       setPronunciationWeakPoints([]);
     } catch (error) {
-      console.error(error);
-      if (!request.signal.aborted) alert("Impossible de générer le texte.");
+      if (articleRequest.current===request && !request.signal.aborted) {
+        generationPreparation.finish(operationId,"failed",generationErrorCode);
+        alert(error instanceof Error && error.message.startsWith("Trop de demandes") ? error.message : "Impossible de générer le texte.");
+      }
     } finally {
       if (articleRequest.current === request) {
         articleRequest.current = null;
-        setIsGenerating(false);
+        generationPreparation.finish(operationId,"cancelled");
       }
     }
   }
 
   return (
     <AppShell>
+      <BetaDiagnostics />
       <ArticleHeader article={article} />
 
       <section className="mb-4 text-sm text-slate-600" aria-label="Identité du texte">
@@ -327,7 +349,10 @@ export default function Page() {
         readingSpeed={readingSpeed}
         onReadingSpeedChange={setReadingSpeed}
       />
+      <PreparationNotice label={generationPending ? "Préparation du texte…" : null} />
+      {article.contentType !== "tongue-twisters" && <PreparationNotice label={playbackState.preparation ? article.contentType==="theatre" ? "Préparation de la scène…" : "Préparation de la lecture…" : playbackState.conversationPreparing ? "Préparation du tour de parole…" : null} />}
       {article.contentType === "tongue-twisters" && <TongueTwisterPractice
+        audioPreparing={!!playbackState.preparation}
         document={article} selectedId={practiceState.target?.itemId} speed={readingSpeed}
         busy={recordingBusy || isGenerating} audioBusy={playbackState.busy} pronunciation={pronunciationState}
         onSpeedChange={setReadingSpeed}
@@ -397,6 +422,7 @@ export default function Page() {
         </div>
 
         <div>
+          <PreparationNotice label={vocabularyPending ? "Analyse du mot dans son contexte…" : null} />
           <WordInsightPanel selectedWord={selectedWord ?? fallbackInsight} />
         </div>
       </div>

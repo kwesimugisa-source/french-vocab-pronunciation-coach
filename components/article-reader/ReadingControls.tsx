@@ -1,3 +1,4 @@
+import PreparationNotice from "./PreparationNotice";
 type Props = {
   isRecording: boolean;
   hasRecording: boolean;
@@ -25,6 +26,7 @@ export default function ReadingControls({
 }: Props) {
   return (
     <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <PreparationNotice label={isAnalyzing ? "Analyse de la prononciation…" : null} />
       {targetLabel && <p className="mb-3 text-sm font-medium">{targetLabel}</p>}
       <div className="flex flex-wrap items-center gap-3">
         <button

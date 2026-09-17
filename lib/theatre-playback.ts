@@ -58,7 +58,7 @@ export type PlaybackEnvironment = {
 
 export const browserPlaybackEnvironment: PlaybackEnvironment = {
   createChorusContext: () => new AudioContext(),
-  createAudio: (url) => new Audio(url),
+  createAudio: (url) => { if(typeof Audio === "undefined") throw new Error("La lecture audio n’est pas disponible dans ce navigateur."); return new Audio(url); },
   createUrl: (blob) => URL.createObjectURL(blob),
   revokeUrl: (url) => URL.revokeObjectURL(url),
   setTimer: (callback, ms) => setTimeout(callback, ms),

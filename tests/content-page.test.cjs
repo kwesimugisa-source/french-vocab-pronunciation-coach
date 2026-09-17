@@ -41,15 +41,15 @@ function harness() {
     stop() { this.snapshot.status = "recorded"; this.snapshot.recording = { target: this.snapshot.target, blob: new Blob(["recording"]) }; }
   }
   const overrides = { react, "@/lib/reading-playback": { ReadingPlaybackSession: Playback }, "@/lib/pronunciation-session": { PronunciationSession: Pronunciation } };
-  for (const name of ["article-reader/ArticleHeader", "article-reader/ArticleTextPanel", "article-reader/ReadingControls", "article-reader/ReadingSetupBar", "article-reader/TheatreControls", "article-reader/TongueTwisterPractice", "layout/AppShell", "pronunciation/PronunciationSummary", "pronunciation/WeakPointsPanel", "vocabulary/WordInsightPanel"])
+  for (const name of ["BetaDiagnostics", "article-reader/PreparationNotice", "article-reader/ArticleHeader", "article-reader/ArticleTextPanel", "article-reader/ReadingControls", "article-reader/ReadingSetupBar", "article-reader/TheatreControls", "article-reader/TongueTwisterPractice", "layout/AppShell", "pronunciation/PronunciationSummary", "pronunciation/WeakPointsPanel", "vocabulary/WordInsightPanel"])
     overrides[`@/components/${name}`] = name.split("/").at(-1);
-  const Page = createLoader(overrides)("app/page.tsx").default;
+  const loader = createLoader(overrides), Page = loader("app/page.tsx").default;
   function render() { cursor = 0; tree = Page(); effects.splice(0).forEach(fn => fn()); return tree; }
   function nodes(value) { return Array.isArray(value) ? value.flatMap(nodes) : value && typeof value === "object" ? [value, ...nodes(value.props?.children)] : []; }
   function find(type, predicate = () => true) { return nodes(tree).find(n => n.type === type && predicate(n.props))?.props; }
   const oldAlert = global.alert; global.alert = message => alerts.push(message);
   render();
-  return { render, find, alerts, plays, get playback() { return playback; }, get pronunciation() { return pronunciation; },
+  return { render, find, alerts, plays, journal: loader("lib/beta-events.ts").betaJournal, get playback() { return playback; }, get pronunciation() { return pronunciation; },
     document: () => find("ArticleHeader").article,
     setup: () => find("ReadingSetupBar"),
     import(text) {
@@ -182,4 +182,41 @@ test("custom sound validation prevents generation without replacing active docum
     const old = h.document(); h.setup().onContentTypeChange("tongue-twisters"); h.setup().onTargetSoundChange("custom"); h.setup().onCustomSoundChange("<instructions>"); h.render();
     await h.setup().onGenerateArticle(); h.render(); assert.equal(calls, 0); assert.equal(h.document(), old); assert.equal(h.alerts.length, 1);
   } finally { h.dispose(); global.fetch = priorFetch; }
+});
+
+test("CP4.4 generation feedback begins immediately, blocks duplicates and ignores stale completion", async () => {
+  const h=harness(), before=global.fetch, pending=[deferred(),deferred()]; let count=0;
+  global.fetch=()=>pending[count++].promise;
+  try {
+    const first=h.setup().onGenerateArticle(); h.render();
+    assert.equal(h.setup().isGenerating,true); assert.equal(h.find("PreparationNotice",p=>p.label==="Préparation du texte…").label,"Préparation du texte…");
+    await h.setup().onGenerateArticle(); assert.equal(count,1);
+    h.import("Nouveau texte."); const second=h.setup().onGenerateArticle(); h.render();
+    pending[0].resolve(Response.json(makeDoc("news","B1"))); await first; h.render(); assert.equal(h.setup().isGenerating,true);
+    pending[1].resolve(Response.json(makeDoc("news","B1"))); await second; h.render(); assert.equal(h.setup().isGenerating,false);
+    assert.equal(h.journal.inspect().filter(e=>e.name==="document_created").length,1);
+    assert.equal(h.journal.inspect().filter(e=>e.name==="operation"&&e.status==="completed").length,1);
+  } finally {h.dispose();global.fetch=before;}
+});
+
+test("CP4.4 generation 429 preserves active document and emits normalized failure", async()=>{
+  const h=harness(), before=global.fetch; global.fetch=async()=>new Response("SENSITIVE",{status:429});
+  try {
+    const original=h.document(); await h.setup().onGenerateArticle(); h.render();
+    assert.equal(h.document(),original); assert.equal(h.setup().isGenerating,false); assert.match(h.alerts.at(-1),/Trop de demandes/);
+    assert.equal(h.journal.inspect().find(e=>e.status==="failed").code,"RATE_LIMITED");
+    assert.doesNotMatch(JSON.stringify(h.journal.inspect()),/SENSITIVE/);
+  } finally {h.dispose();global.fetch=before;}
+});
+
+test("CP4.4 Theatre replay/practice events keep opaque document metadata without dialogue",()=>{
+  const h=harness();
+  try {
+    h.import("(La porte s’ouvre.)\nNORA: Bonjour.\nSAMIR: Salut."); h.setup().onPlayAudio(); h.render();
+    h.playback.theatre.replay=()=>{}; h.playback.theatre.enterPractice=()=>true;
+    h.find("TheatreControls").onReplay(); h.find("TheatreControls").onPractise("line-2");
+    const recorded=h.journal.inspect().filter(e=>["theatre_replay","theatre_practice"].includes(e.name));
+    assert.equal(recorded.length,2); assert.ok(recorded.every(e=>e.contentType==="theatre" && e.revision===1));
+    assert.notEqual(recorded[0].documentId,h.document().documentId); assert.doesNotMatch(JSON.stringify(recorded),/NORA|Bonjour/);
+  } finally {h.dispose();}
 });

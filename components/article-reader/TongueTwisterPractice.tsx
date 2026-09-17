@@ -3,9 +3,11 @@ import type { PronunciationSnapshot } from "@/lib/pronunciation-session";
 import { READING_SPEEDS } from "@/lib/tongue-twisters";
 import PronunciationSummary from "@/components/pronunciation/PronunciationSummary";
 import WeakPointsPanel from "@/components/pronunciation/WeakPointsPanel";
+import PreparationNotice from "./PreparationNotice";
 
 type Props = {
   document: ContentDocument; selectedId?: string; speed: string; busy: boolean; audioBusy: boolean;
+  audioPreparing?: boolean;
   pronunciation: PronunciationSnapshot;
   onSpeedChange: (speed: string) => void; onListen: (id: string) => void; onSelect: (id: string) => void;
   onStopAudio: () => void; onRecord: () => void; onStopRecording: () => void; onAnalyze: () => void;
@@ -26,10 +28,11 @@ export default function TongueTwisterPractice(p: Props) {
       <h3 className="font-semibold">Exercice {e.index + 1} · {e.target.label}</h3>
       <p className="my-3 whitespace-pre-wrap">{e.text}</p>
       <div className="flex flex-wrap gap-2">
-        <button className={button} disabled={p.busy} onClick={() => p.onListen(e.id)}>{e.id === active?.id ? "Réécouter" : "Écouter"}</button>
+        <button className={button} disabled={p.busy || p.audioPreparing} onClick={() => p.onListen(e.id)}>{e.id === active?.id ? "Réécouter" : "Écouter"}</button>
         <button className={button} disabled={p.busy} onClick={() => p.onSelect(e.id)}>Répéter</button>
       </div>
       {e.id === active?.id && <div className="mt-4 space-y-3">
+        <PreparationNotice label={p.audioPreparing ? "Préparation de l’audio de cette phrase…" : p.pronunciation.status==="analyzing" ? "Analyse de la prononciation…" : null} />
         <label className="block text-sm">Vitesse <select aria-label="Vitesse de cet exercice" className="ml-2 rounded-xl border p-2" value={p.speed} onChange={event => p.onSpeedChange(event.target.value)}>
           {READING_SPEEDS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select></label>
