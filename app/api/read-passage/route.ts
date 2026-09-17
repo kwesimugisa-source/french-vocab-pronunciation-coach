@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
+import { generateConversation } from "../../../lib/conversation-generation";
+import { conversationTurns } from "../../../lib/conversation";
 
 import { readingMode } from "../../../lib/content-routing";
 import { isEffectiveType, MAX_TEXT_LENGTH, TTS_INPUT_LIMIT, validateIdentity } from "../../../lib/content-document";
@@ -64,6 +66,21 @@ export async function POST(req: Request) {
 
     const playbackSpeed = speedMap[String(speed)] ?? 1.0;
     const mode = readingMode(text, body.contentType);
+
+    if (body.contentType === "conversation") {
+      try {
+        const turns = conversationTurns(text);
+        if (turns.some(turn => turn.spokenText.length > TTS_INPUT_LIMIT))
+          return new Response(`Un tour de parole dépasse ${TTS_INPUT_LIMIT} caractères. Raccourcissez ce tour pour l’écouter.`, { status: 413 });
+      } catch (error) {
+        return new Response(error instanceof Error ? error.message : "Conversation invalide.", { status: 400 });
+      }
+      try {
+        return Response.json(await generateConversation(text, playbackSpeed, input => speechToBase64({ client, ...input })));
+      } catch (error) {
+        return new Response(error instanceof Error ? error.message : "Génération de conversation impossible.", { status: 500 });
+      }
+    }
 
     if (mode === "theatre") {
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>

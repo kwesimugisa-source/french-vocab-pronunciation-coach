@@ -24,10 +24,10 @@ test("conservative existing normalization keeps ambiguous names distinct", () =>
   assert.deepEqual(cast.members.map((m) => m.speaker), ["L'AMI", "NORA", "NORA (JEUNE)", "NORA JEUNE"]);
 });
 
-test("all 11 available character voices are used before deterministic reuse; narrator never leaks", () => {
+test("all 9 unreserved character voices are used before deterministic reuse; narrator and chorus never leak", () => {
   const items = parseTheatreItems(Array.from({ length: 25 }, (_, i) => `ROLE ${i}: Bonjour.`).join("\n"));
   const cast = createTheatreCasting(items);
-  assert.equal(new Set(cast.members.map((m) => m.voice)).size, 11);
+  assert.equal(new Set(cast.members.map((m) => m.voice)).size, 9);
   assert.equal(cast.reusedCharacterVoices, true);
   assert.ok(cast.members.every((m) => m.voice !== "cedar" && m.voice !== "echo"));
   assert.deepEqual(cast, createTheatreCasting(items));

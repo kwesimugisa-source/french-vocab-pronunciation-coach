@@ -6,6 +6,7 @@ import { ExercisePracticeSession } from "@/lib/exercise-practice";
 import { soundTarget } from "@/lib/tongue-twisters";
 import TongueTwisterPractice from "@/components/article-reader/TongueTwisterPractice";
 import { PronunciationSession } from "@/lib/pronunciation-session";
+import { conversationReference } from "@/lib/conversation";
 import { CONTENT_LABELS, CONTENT_TYPES, ContentDocument, EffectiveType, generatedDocument, validateDocument } from "@/lib/content-document";
 import { importDocument } from "@/lib/smart-import";
 import { VocabularySession, sentenceAt } from "@/lib/vocabulary-session";
@@ -212,11 +213,14 @@ export default function Page() {
   function handleStartReading() {
     if (pronunciation.isBusy()) return;
     if (article.contentType === "tongue-twisters") { void practice.record(); return; }
+    let referenceText = article.text;
+    try { if (article.contentType === "conversation") referenceText = conversationReference(article.text); }
+    catch (error) { alert(error instanceof Error ? error.message : "Conversation invalide."); return; }
     const target = playback.theatre.getSnapshot().practiceTarget;
     void pronunciation.start(target ? {
       documentId: article.documentId, revision: article.revision, text: target.text, itemId: target.itemId,
       speaker: target.speaker, sessionId: target.sessionId,
-    } : { text: article.text, documentId: article.documentId, revision: article.revision });
+    } : { text: referenceText, documentId: article.documentId, revision: article.revision });
   }
 
   function handleStopReading() { pronunciation.stop(); }

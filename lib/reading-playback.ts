@@ -6,9 +6,10 @@ import type { AmbienceLevel } from "./ambience-playback";
 import { validateAmbience } from "./theatre-ambience";
 import type { AmbienceKind, AmbienceProvider } from "./theatre-ambience";
 import type { TheatreResponse } from "./theatre";
+import { ConversationPlayback } from "./conversation-playback";
 
 type ReadingSnapshot = {
-  mode: "pending" | "theatre" | "ordinary" | null;
+  mode: "pending" | "theatre" | "ordinary" | "conversation" | null;
   busy: boolean;
   theatre: TheatrePlaybackSnapshot;
   error: string | null;
@@ -20,7 +21,9 @@ type ReadingSnapshot = {
  */
 export class ReadingPlaybackSession {
   readonly theatre: TheatrePlaybackController;
+  readonly conversation: ConversationPlayback;
   private request: AbortController | null = null;
+  private conversationRequest = false;
   private ordinary: PlaybackAudio | null = null;
   private ordinaryUrl: string | null = null;
   private listeners = new Set<() => void>();
@@ -36,6 +39,7 @@ export class ReadingPlaybackSession {
   ) {
     this.theatre = new TheatrePlaybackController(environment);
     this.ambience = new AmbiencePlayback(environment, ambienceProvider);
+    this.conversation = new ConversationPlayback(environment, () => this.update({ error: this.conversation.getSnapshot().error }));
     this.snapshot = { mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null,
       ambience: { environment: "none", level: "off" } };
     this.unsubscribe = this.theatre.subscribe(() => this.update({}));
@@ -49,7 +53,7 @@ export class ReadingPlaybackSession {
     const theatre = this.theatre.getSnapshot();
     this.ambience.setActive(["playing", "paused", "replaying", "practising"].includes(theatre.status));
     this.snapshot = { ...this.snapshot, ...patch, theatre,
-      busy: !!this.request || !!this.ordinary || !!theatre.practiceTarget ||
+      busy: !!this.request || !!this.ordinary || this.conversation.getSnapshot().busy || !!theatre.practiceTarget ||
         ["playing", "paused", "replaying", "practising"].includes(theatre.status) };
     this.listeners.forEach((listener) => listener());
   }
@@ -67,7 +71,9 @@ export class ReadingPlaybackSession {
   stop() {
     const request = this.request;
     this.request = null;
+    this.conversationRequest = false;
     request?.abort();
+    this.conversation.stop();
     this.releaseOrdinary();
     this.ambience.stop();
     this.theatre.stop();
@@ -82,6 +88,9 @@ export class ReadingPlaybackSession {
    * The idempotent release restores ambience, never resumes performance. */
   beginMicrophoneCapture = () => {
     this.captures++;
+    // Conversation cannot advance while the microphone owns the audio boundary.
+    // Invalidate pending responses too; releasing capture never starts speech.
+    if (this.snapshot.mode === "conversation" || this.conversationRequest) this.stop();
     this.ambience.setMuted(true);
     this.theatre.setCaptureBlocked(true);
     this.ordinary?.pause();
@@ -107,7 +116,8 @@ export class ReadingPlaybackSession {
     const request = new AbortController();
     this.request = request;
     this.update({ mode: "pending", error: null });
-    const sessionId = this.theatre.beginLoading();
+    this.conversationRequest = identity?.contentType === "conversation";
+    const sessionId = this.conversationRequest ? null : this.theatre.beginLoading();
     const current = () => this.request === request && !request.signal.aborted;
     const run = async () => {
       try {
@@ -117,15 +127,22 @@ export class ReadingPlaybackSession {
         });
         if (!current()) return;
         if (!response.ok) {
-          if (response.status === 413) throw new Error(await response.text());
+          if (response.status === 413 || this.conversationRequest) throw new Error(await response.text());
           throw new Error("Échec de la génération audio. Aucun passage incomplet ne sera lu.");
         }
         if ((response.headers.get("Content-Type") || "").includes("application/json")) {
+          if (identity?.contentType === "conversation") {
+            const data: unknown = await response.json();
+            if (!current() || this.captures) return;
+            this.conversation.accept(data, text, ({ "very-slow": 0.7, slow: 0.85, normal: 1, fast: 1.15 } as Record<string, number>)[speed]);
+            this.update({ mode: "conversation" });
+            return;
+          }
           if (identity && identity.contentType !== "theatre")
             throw new Error("Le mode audio reçu ne correspond pas au texte.");
           const data: unknown = await response.json();
           if (!current()) return;
-          this.theatre.acceptScene(sessionId, data, text);
+          this.theatre.acceptScene(sessionId!, data, text);
           const scene = data as TheatreResponse;
           // Only CP4's sanitized legacy shape omitted confidence. New scene
           // reasoning must carry its own validated confidence, never invent it.
@@ -135,6 +152,7 @@ export class ReadingPlaybackSession {
           this.ambience.configure(recommendation.environment);
           this.update({ mode: "theatre", ambience: { ...this.snapshot.ambience, environment: recommendation.environment } });
         } else {
+          if (identity?.contentType === "conversation") throw new Error("La réponse audio ne contient pas les tours de parole attendus.");
           if (identity?.contentType === "theatre") throw new Error("La scène théâtrale reçue est incomplète.");
           const blob = await response.blob();
           if (!current()) return;
@@ -156,10 +174,10 @@ export class ReadingPlaybackSession {
       } catch (error) {
         if (!current()) return;
         this.releaseOrdinary();
-        this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");
+        if (sessionId !== null) this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");
         this.update({ error: error instanceof Error ? error.message : "Impossible de charger la lecture IA. Réessayez." });
       } finally {
-        if (this.request === request) { this.request = null; this.update({}); }
+        if (this.request === request) { this.request = null; this.conversationRequest = false; this.update({}); }
       }
     };
     // Stop settles start() even if a transport/mock ignores AbortSignal.

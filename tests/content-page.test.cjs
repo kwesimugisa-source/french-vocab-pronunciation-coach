@@ -62,6 +62,22 @@ function harness() {
 }
 const makeDoc = (type, level = "A1") => generatedDocument({ title: "Test", text: type === "theatre" ? "NORA: Bonjour.\nSAMIR: Salut." : "Le chat dort. Un chat joue." }, type, level, `generated-${type}`);
 
+test("Conversation page displays original labels but records only spoken dialogue; malformed structure never opens microphone", () => {
+  const h = harness();
+  try {
+    const raw = "Marie : Bonjour, comment allez-vous ?\nDavid : Très bien, merci. Et vous ?\nMarie : Je vais très bien.";
+    h.import(raw);
+    assert.equal(h.document().contentType, "conversation"); assert.equal(h.document().text, raw);
+    h.find("ReadingControls").onStartReading(); h.render();
+    assert.equal(h.pronunciation.snapshot.target.text, "Bonjour, comment allez-vous ?\nTrès bien, merci. Et vous ?\nJe vais très bien.");
+    assert.equal(h.find("TheatreControls"), undefined);
+    h.import("Marie : Bonjour.\nUne ligne sans étiquette.");
+    h.find("select", p => p["aria-label"] === "Type du texte importé").onChange({ target: { value: "conversation" } }); h.render();
+    h.find("ReadingControls").onStartReading(); h.render();
+    assert.equal(h.pronunciation.snapshot.status, "idle"); assert.match(h.alerts.at(-1), /mal structurée/);
+  } finally { h.dispose(); }
+});
+
 for (const [from, to] of [["news", "poetry"], ["poetry", "theatre"], ["conversation", "theatre"], ["theatre", "conversation"]])
   test(`page ${from} → next selector ${to} retains active type/level and downstream identity`, async () => {
     const h = harness(), priorFetch = global.fetch, doc = makeDoc(from);
