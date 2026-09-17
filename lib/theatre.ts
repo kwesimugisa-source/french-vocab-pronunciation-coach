@@ -65,6 +65,13 @@ export function parseTheatreItems(text: string): TheatreItem[] {
       return;
     }
 
+    // Copied scripts also use a bare chorus heading without a colon. Only exact
+    // shared aliases qualify; do not treat arbitrary uppercase dialogue as labels.
+    if (isChorusSpeaker(line)) {
+      pendingSpeaker = speakerIdentity(line);
+      return;
+    }
+
     const match = line.match(/^(.{1,40}?)\s*[:：]\s*(.*)$/);
     if (match) {
       const spokenText = match[2].trim();
