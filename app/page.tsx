@@ -333,6 +333,12 @@ export default function Page() {
         <p className="mt-2">Les sélecteurs de type et de niveau ci-dessous concernent le prochain texte généré.</p>
       </section>
       <ReadingSetupBar
+        theatreStyle={article.contentType === "theatre" ? playbackState.performanceStyle : undefined}
+        onTheatreStyleChange={style => {
+          if (pronunciation.isBusy() || isGenerating) return;
+          pronunciation.reset();
+          void playback.changeTheatreStyle(style, article.text, readingSpeed, article);
+        }}
         targetSoundId={targetSoundId} customSound={customSound}
         onTargetSoundChange={setTargetSoundId} onCustomSoundChange={setCustomSound}
         hideAudio={article.contentType === "tongue-twisters"}

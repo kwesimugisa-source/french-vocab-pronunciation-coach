@@ -1,3 +1,4 @@
+import { theatreStyle } from "../../../lib/theatre-performance";
 import OpenAI from "openai";
 import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
@@ -92,9 +93,12 @@ async function handlePost(req: Request) {
       } catch { return new Response("Distribution des personnages invalide.", {status:400}); }
     }
     if (mode === "theatre") {
+      let performanceStyle;
+      try { performanceStyle = theatreStyle(body.performanceStyle); }
+      catch { return new Response("Style théâtral invalide.", {status:400}); }
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
         speechToBase64({ client, ...input }),
-        { theatreCharacters, analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
+        { performanceStyle, theatreCharacters, analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       return Response.json(scene);
     }

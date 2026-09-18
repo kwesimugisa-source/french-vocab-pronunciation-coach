@@ -25,6 +25,7 @@ export type TheatreClip = TheatreItem & {
 
 export type TheatreResponse = {
   mode: "theatre";
+  performanceStyle?: import("./theatre-performance").TheatreStyle;
   /** Opaque reference to an ephemeral server-only plan. No dramatic summaries. */
   analysisCacheKey?: string;
   ambience?: import("./theatre-ambience").AmbienceRecommendation;

@@ -105,7 +105,7 @@ test("stage directions use dedicated narrator, characters stay consistent, and a
     const response = await generateTheatreResponse(text, speed, async ({ text }) => audio(text));
     assert.deepEqual(response.clips.map((clip) => clip.voice), ["cedar", "coral", "ash", "cedar", "coral", "echo"]);
     response.clips.forEach((clip) => assert.equal(clip.speed,
-      clip.type === "stage" ? Math.max(0.65, speed - 0.15) : Math.max(0.95, speed)));
+      clip.type === "stage" ? Math.max(0.65, speed - 0.15) : speed));
     assertCompleteTheatreResponse(response, parseTheatreItems(text));
   }
 });

@@ -1,3 +1,4 @@
+import { theatreStyle } from "./theatre-performance";
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip, TheatreItem, TheatreResponse } from "./theatre";
 import { createTheatreCasting, theatreRole } from "./theatre-casting";
@@ -32,8 +33,9 @@ export async function generateTheatreResponse(
   text: string,
   playbackSpeed: number,
   synthesize: (input: SpeechInput) => Promise<string>,
-  options: { theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean } = {}
+  options: { performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean } = {}
 ): Promise<TheatreResponse> {
+  const performanceStyle = theatreStyle(options.performanceStyle);
   const items = parseTheatreItems(text);
   const metadata = options.theatreCharacters === undefined ? [] : validateTheatreCharacters(options.theatreCharacters, text);
   const casting = createTheatreCasting(items, options.narratorVoice, metadata);
@@ -48,8 +50,8 @@ export async function generateTheatreResponse(
     [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
     item,
     voice, componentIndex,
-    instructions: dramaticInstructions(item, analysis),
-    speed: item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : Math.max(0.95, playbackSpeed),
+    instructions: dramaticInstructions(item, analysis, performanceStyle, {voice, items}),
+    speed: item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : playbackSpeed,
   })));
   const components: { voice: string; audioBase64: string }[][] = items.map(() => []);
   const clips: TheatreClip[] = new Array(items.length);
@@ -79,7 +81,7 @@ export async function generateTheatreResponse(
   for (const item of items) {
     if (failedItems.some((failed) => failed.index === item.index)) continue;
     const parts = components[item.index];
-    const speed = item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : Math.max(0.95, playbackSpeed);
+    const speed = item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : playbackSpeed;
     clips[item.index] = { ...item, ...parts[0], speed,
       ...(theatreRole(item) === "chorus" ? { chorus: { components: parts } } : {}) };
     generatedClipCount++;
@@ -91,6 +93,7 @@ export async function generateTheatreResponse(
 
   const response: TheatreResponse = {
     mode: "theatre",
+    performanceStyle,
     direction,
     ...(analysis ? { analysisCacheKey: theatreAnalysisCache.put(text, analysis) } : {}),
     casting,

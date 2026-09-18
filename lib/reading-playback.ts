@@ -1,3 +1,4 @@
+import { theatreStyle, TheatreStyle } from "./theatre-performance";
 import { ContentIdentity, validateIdentity } from "./content-document";
 import { browserPlaybackEnvironment, TheatrePlaybackController } from "./theatre-playback";
 import type { PlaybackAudio, PlaybackEnvironment, TheatrePlaybackSnapshot } from "./theatre-playback";
@@ -13,6 +14,7 @@ import type { TheatreResponse } from "./theatre";
 import { ConversationPlayback } from "./conversation-playback";
 
 type ReadingSnapshot = {
+  performanceStyle: TheatreStyle;
   mode: "pending" | "theatre" | "ordinary" | "conversation" | null;
   busy: boolean;
   theatre: TheatrePlaybackSnapshot;
@@ -54,7 +56,7 @@ export class ReadingPlaybackSession {
       if(this.snapshot.ambience.status==="playback_failed") this.update({ambience:{...this.snapshot.ambience,status:"detected_available"}});
     });
     this.conversation = new ConversationPlayback(environment, () => this.update({ error: this.conversation.getSnapshot().error }));
-    this.snapshot = { mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null, preparation:null, conversationPreparing:false,
+    this.snapshot = { performanceStyle: "clarte", mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null, preparation:null, conversationPreparing:false,
       ambience: { environment: "none", level: "off", status:"analysis_unavailable" } };
     this.preparation.subscribe(() => this.update({}));
     this.unsubscribe = this.theatre.subscribe(() => this.update({}));
@@ -141,12 +143,24 @@ export class ReadingPlaybackSession {
   };
   dispose() { this.invalidateDocument(); this.unsubscribe(); this.listeners.clear(); this.theatre.dispose(); }
 
+  /** A new style owns a fresh audio session. Scene analysis is independent and reusable.
+   * Restart from the beginning explicitly; never mix an old queue/practice bookmark. */
+  async changeTheatreStyle(value: unknown, text: string, speed: string, identity: ContentIdentity) {
+    const style = theatreStyle(value);
+    if (identity.contentType !== "theatre" || this.captures || style === this.snapshot.performanceStyle) return;
+    const restart = this.snapshot.mode === "theatre" || this.snapshot.mode === "pending";
+    this.stop();
+    this.update({ performanceStyle: style });
+    if (restart) await this.start(text, speed, identity);
+  }
+
   async start(text: string, speed: string, identity?: ContentIdentity) {
     if (this.snapshot.busy || this.captures) return;
     this.stop();
     if (identity) {
       try { validateIdentity(identity); } catch { this.update({ error: "Identité du document invalide." }); return; }
     }
+    const performanceStyle = identity?.contentType === "theatre" ? this.snapshot.performanceStyle : "clarte";
     const request = new AbortController();
     this.request = request;
     const context=betaContext(identity,speed);
@@ -165,7 +179,7 @@ export class ReadingPlaybackSession {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
           method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders() },
-          body: JSON.stringify({ text, speed, ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
+          body: JSON.stringify({ text, speed, ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
         if (!current()) return;
         if (!response.ok) {
@@ -186,8 +200,10 @@ export class ReadingPlaybackSession {
             throw new Error("Le mode audio reçu ne correspond pas au texte.");
           const data: unknown = await response.json();
           if (!current()) return;
-          this.theatre.acceptScene(sessionId!, data, text);
           const scene = data as TheatreResponse;
+          if (theatreStyle(scene.performanceStyle) !== performanceStyle)
+            throw new Error("Le style audio reçu ne correspond pas au style demandé.");
+          this.theatre.acceptScene(sessionId!, data, text);
           // Only CP4's sanitized legacy shape omitted confidence. New scene
           // reasoning must carry its own validated confidence, never invent it.
           const ambience = scene.ambience;

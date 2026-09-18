@@ -1,5 +1,8 @@
+import type { TheatreStyle } from "@/lib/theatre-performance";
 import { READING_SPEEDS, SOUND_TARGETS } from "@/lib/tongue-twisters";
 type Props = {
+  theatreStyle?: TheatreStyle;
+  onTheatreStyleChange?: (value: TheatreStyle) => void;
   contentType: string;
   targetSoundId?: string;
   customSound?: string;
@@ -36,6 +39,7 @@ const levels = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const readingSpeeds = READING_SPEEDS;
 
 export default function ReadingSetupBar({
+  theatreStyle, onTheatreStyleChange,
   contentType,
   targetSoundId = "mixed", customSound = "", onTargetSoundChange, onCustomSoundChange, hideAudio = false,
   level,
@@ -125,6 +129,15 @@ export default function ReadingSetupBar({
               ))}
             </select>
           </div>
+          {theatreStyle && <div className="min-w-[160px]">
+            <label htmlFor="theatreStyle" className="mb-2 block text-sm font-medium">Interprétation théâtrale</label>
+            <select id="theatreStyle" value={theatreStyle} disabled={audioDisabled}
+              onChange={e => onTheatreStyleChange?.(e.target.value as TheatreStyle)}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm">
+              <option value="clarte">Clarté</option><option value="naturel">Naturel</option>
+            </select>
+            <p className="mt-1 text-xs text-slate-500">{theatreStyle === "clarte" ? "Prononciation très nette pour faciliter la compréhension." : "Interprétation plus vivante et conversationnelle."} Changer de style relance la scène au début.</p>
+          </div>}
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
