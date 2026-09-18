@@ -163,7 +163,7 @@ export class ReadingPlaybackSession {
     const performanceStyle = identity?.contentType === "theatre" ? this.snapshot.performanceStyle : "clarte";
     const request = new AbortController();
     this.request = request;
-    const context=betaContext(identity,speed);
+    const context={...betaContext(identity,speed),...(identity?.contentType === "theatre" ? {performanceStyle} : {})};
     this.lifecycle={context,status:"pending",since:Date.now()};
     const preparationId=this.preparation.begin("reading",context);
     const key=identity ? `${identity.documentId}:${identity.revision}:${text}` : "";
@@ -214,7 +214,7 @@ export class ReadingPlaybackSession {
             const reference = typeof scene.analysisCacheKey === "string" && /^[0-9a-f-]{36}$/i.test(scene.analysisCacheKey) ? scene.analysisCacheKey : undefined;
             this.analysisCache={key,reference,ambience:status!=="analysis_unavailable"?recommendation:undefined,retryAt:cached && Date.now()<cached.retryAt ? cached.retryAt : Date.now()+30_000};
           }
-          betaJournal.emit({...context,name:"ambience",status,environment:["none","office","rain","neutral_room"].includes(recommendation.environment)?recommendation.environment as BetaData["environment"]:"other"});
+          betaJournal.emit({...context,name:"ambience",status,environment:["none","office","rain","neutral_room","station"].includes(recommendation.environment)?recommendation.environment as BetaData["environment"]:"other"});
           this.preparation.finish(preparationId,"completed");
           this.update({ mode: "theatre", ambience: { ...this.snapshot.ambience, environment: recommendation.environment, status } });
           this.ambience.configure(status === "detected_available" ? recommendation.environment : "none");

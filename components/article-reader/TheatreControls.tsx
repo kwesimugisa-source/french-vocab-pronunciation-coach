@@ -21,7 +21,7 @@ const labels = {
   paused: "En pause", replaying: "Réécoute en cours", practising: "Pratique d’une réplique",
   completed: "Scène terminée", error: "Lecture interrompue",
 };
-const button = "rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
+const button = "min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function TheatreControls({ playback, recordingBusy, onPause, onResume, onReplay,
   onStop, onPractise, onFinishPractice, ambience, onAmbienceChange }: Props) {
@@ -43,7 +43,7 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
         {labels[playback.status]}{current ? ` — élément ${playback.currentIndex + 1} sur ${playback.queue.length}` : ""}
       </p>
       {!!playback.queue.length && <p className="text-xs text-slate-600">{playback.completions.length} / {playback.queue.length} éléments terminés</p>}
-      {current && !practice && <p className="mt-3 whitespace-pre-line"><strong>{current.speaker} : </strong>{current.text}</p>}
+      {current && !practice && <p className="mt-3 max-w-[68ch] rounded-xl bg-slate-50 p-3 leading-7 whitespace-pre-line"><strong>{current.speaker} : </strong>{current.text}</p>}
       {playback.error && <p role="alert" className="mt-3 text-sm text-red-700">
         {playback.error.message} {playback.error.itemId && `Élément ${playback.error.index + 1} (${playback.error.itemId}).`}
       </p>}

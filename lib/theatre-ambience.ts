@@ -14,7 +14,7 @@ export function ambienceStatusDescription(status: AmbienceStatus, kind: Ambience
   if (status === "analysis_unavailable") return "Analyse de l’ambiance indisponible ou incertaine.";
   if (status === "playback_failed") return "Impossible de lire l’ambiance. La lecture du texte continue.";
   if (status === "detected_unavailable") return `Ambiance détectée : ${AMBIENCE_CATALOGUE[kind].toLocaleLowerCase("fr")}, mais aucun son n’est disponible.`;
-  return `Ambiance : ${AMBIENCE_CATALOGUE[kind].toLocaleLowerCase("fr")} — suspendue pendant l’enregistrement.`;
+  return `Ambiance : ${AMBIENCE_CATALOGUE[kind].toLocaleLowerCase("fr")} — disponible. Pause automatique lors de l’enregistrement.`;
 }
 type Evidence = { itemId: string; quote: string };
 export type AmbienceRecommendation = {

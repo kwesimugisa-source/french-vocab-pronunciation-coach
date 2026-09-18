@@ -56,9 +56,10 @@ export default function ReadingSetupBar({
 }: Props) {
   return (
     <section className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="min-w-[220px]">
+      <h2 className="mb-4 text-lg font-semibold">Préparer et écouter</h2>
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="grid min-w-0 flex-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="min-w-0">
             <label
               htmlFor="contentType"
               className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
@@ -79,7 +80,7 @@ export default function ReadingSetupBar({
             </select>
           </div>
 
-          {contentType === "tongue-twisters" && <div className="min-w-[220px]">
+          {contentType === "tongue-twisters" && <div className="min-w-0">
             <label htmlFor="targetSound" className="mb-2 block text-sm">Son à pratiquer</label>
             <select id="targetSound" className="w-full rounded-2xl border p-3" value={targetSoundId} onChange={e => onTargetSoundChange?.(e.target.value)}>
               {SOUND_TARGETS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
@@ -88,7 +89,7 @@ export default function ReadingSetupBar({
               <input aria-label="Autre son à pratiquer" maxLength={40} className="mt-1 w-full rounded-xl border p-2" value={customSound} onChange={e => onCustomSoundChange?.(e.target.value)} placeholder="Ex. : EU / ŒU" />
             </label>}
           </div>}
-          <div className="min-w-[140px]">
+          <div className="min-w-0">
             <label
               htmlFor="level"
               className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
@@ -109,7 +110,7 @@ export default function ReadingSetupBar({
             </select>
           </div>
 
-          <div className="min-w-[160px]">
+          <div className="min-w-0">
             <label
               htmlFor="readingSpeed"
               className="mb-2 block text-xs font-medium uppercase tracking-[0.14em] text-slate-500"
@@ -129,7 +130,7 @@ export default function ReadingSetupBar({
               ))}
             </select>
           </div>
-          {theatreStyle && <div className="min-w-[160px]">
+          {theatreStyle && <div className="min-w-0">
             <label htmlFor="theatreStyle" className="mb-2 block text-sm font-medium">Interprétation théâtrale</label>
             <select id="theatreStyle" value={theatreStyle} disabled={audioDisabled}
               onChange={e => onTheatreStyleChange?.(e.target.value as TheatreStyle)}
@@ -156,13 +157,13 @@ export default function ReadingSetupBar({
             disabled={audioDisabled}
             className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
-            {audioLabel ?? (isPlayingAudio ? "Arrêter la lecture IA" : "Lecture la IA")}
+            {audioLabel ?? (isPlayingAudio ? "Arrêter la lecture IA" : "Écouter le texte")}
           </button>}
         </div>
       </div>
 
       <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        L’IA générera un texte en français selon le type de contenu, le niveau et la vitesse de lecture sélectionnés.
+        Choisissez un type et un niveau pour créer un texte. La vitesse et l’interprétation règlent votre prochaine écoute.
       </div>
     </section>
   );

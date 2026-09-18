@@ -1,7 +1,7 @@
 /** Privacy boundary: no free-form strings, source IDs, error messages or content.
  * Bounded ephemeral diagnostics ONLY. No transport or durable storage configured.
  * A durable adapter/admin deployment requires the owner's infrastructure decision. */
-export const EVENTS = ["document_created", "document_imported", "document_reinterpreted", "operation", "playback", "pronunciation_attempt", "pronunciation_retry", "theatre_replay", "theatre_practice", "virelangue_listen", "virelangue_practice", "ambience", "provider", "rate_limit"] as const;
+export const EVENTS = ["document_created", "document_imported", "document_reinterpreted", "operation", "playback", "pronunciation_attempt", "pronunciation_retry", "theatre_replay", "theatre_practice", "virelangue_listen", "virelangue_practice", "ambience", "provider", "rate_limit", "theatre_style"] as const;
 export const OPERATIONS = ["generation", "reading", "vocabulary", "pronunciation", "direction", "tts", "transcription"] as const;
 export const STATUSES = ["started", "completed", "failed", "cancelled", "paused", "resumed", "analyzed_no_ambience", "detected_available", "detected_unavailable", "analysis_unavailable", "playback_failed"] as const;
 export const ERRORS = ["RATE_LIMITED", "INVALID_INPUT", "PROVIDER_FAILED", "PLAYBACK_FAILED", "ANALYSIS_UNAVAILABLE", "CAPABILITY_UNAVAILABLE", "MICROPHONE_UNAVAILABLE"] as const;
@@ -10,10 +10,11 @@ export type BetaData = {
   name: EnumValue<typeof EVENTS>; operation?: EnumValue<typeof OPERATIONS>; status?: EnumValue<typeof STATUSES>;
   contentType?: "news" | "opinion" | "creative" | "conversation" | "academic" | "everyday-life" | "poetry" | "theatre" | "tongue-twisters" | "unknown";
   origin?: "generated" | "imported"; level?: "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | "unknown";
+  performanceStyle?: "clarte" | "naturel";
   speed?: "very-slow" | "slow" | "normal" | "fast";
   documentId?: string; revision?: number; operationId?: string; durationMs?: number; logicalItems?: number;
   requests?: number; ttsCharacters?: number; inputTokens?: number; outputTokens?: number;
-  code?: EnumValue<typeof ERRORS>; environment?: "none" | "neutral_room" | "office" | "rain" | "other";
+  code?: EnumValue<typeof ERRORS>; environment?: "none" | "neutral_room" | "office" | "rain" | "station" | "other";
 };
 export type BetaEvent = BetaData & { eventId: string; sessionId: string; timestamp: number };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -21,7 +22,8 @@ const enums: Record<string, readonly string[]> = {
   name: EVENTS, operation: OPERATIONS, status: STATUSES, code: ERRORS,
   contentType: ["news", "opinion", "creative", "conversation", "academic", "everyday-life", "poetry", "theatre", "tongue-twisters", "unknown"],
   origin: ["generated", "imported"], level: ["A1", "A2", "B1", "B2", "C1", "C2", "unknown"],
-  speed: ["very-slow", "slow", "normal", "fast"], environment: ["none", "neutral_room", "office", "rain", "other"],
+  performanceStyle: ["clarte", "naturel"],
+  speed: ["very-slow", "slow", "normal", "fast"], environment: ["none", "neutral_room", "office", "rain", "station", "other"],
 };
 const ids = ["documentId", "operationId", "eventId", "sessionId"];
 const numbers = ["revision", "durationMs", "logicalItems", "requests", "ttsCharacters", "inputTokens", "outputTokens", "timestamp"];
@@ -56,7 +58,7 @@ export class BetaJournal {
     const byMode: Record<string, Record<string, number>> = {};
     let requests = 0, ttsCharacters = 0, inputTokens = 0, outputTokens = 0;
     for (const e of events) {
-      for (const key of ["name", "operation", "status", "contentType", "level", "speed", "code", "environment"] as const) {
+      for (const key of ["name", "operation", "status", "contentType", "level", "speed", "performanceStyle", "code", "environment"] as const) {
         if (e[key]) { const label = `${key}:${e[key]}`; counts[label] = (counts[label] ?? 0) + 1; }
       }
       if (e.contentType) {

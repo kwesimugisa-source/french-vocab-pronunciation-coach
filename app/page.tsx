@@ -313,7 +313,7 @@ export default function Page() {
       <BetaDiagnostics />
       <ArticleHeader article={article} />
 
-      <section className="mb-4 text-sm text-slate-600" aria-label="Identité du texte">
+      <section className="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-600" aria-label="Identité du texte">
         <p>Texte actuel : {CONTENT_LABELS[article.contentType]} · Niveau : {article.level ?? "non évalué"} ·
           {({ generated: " Type choisi à la génération", detected: " Type détecté", "learner-override": " Choix manuel", unknown: " Genre incertain" })[article.typeSource]}</p>
         {article.origin === "imported" && <>
@@ -336,6 +336,7 @@ export default function Page() {
         theatreStyle={article.contentType === "theatre" ? playbackState.performanceStyle : undefined}
         onTheatreStyleChange={style => {
           if (pronunciation.isBusy() || isGenerating) return;
+          betaJournal.emit({...betaContext(article,readingSpeed),name:"theatre_style",performanceStyle:style});
           pronunciation.reset();
           void playback.changeTheatreStyle(style, article.text, readingSpeed, article);
         }}
@@ -418,9 +419,11 @@ export default function Page() {
   )}
 </div>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <div>
+        <div className="min-w-0">
           <ArticleTextPanel
             article={article}
+            activeItemId={playbackState.mode === "theatre" && ["playing", "replaying", "paused"].includes(playbackState.theatre.status) ? playbackState.theatre.queue[playbackState.theatre.currentIndex]?.id : undefined}
+            practiceItemId={playbackState.mode === "theatre" ? playbackState.theatre.practiceTarget?.itemId : undefined}
             selectedWord={selectedWordKey}
             onWordClick={handleAnalyzeWord}
             weakWords={pronunciationWeakPoints.map((item) => item.word)}

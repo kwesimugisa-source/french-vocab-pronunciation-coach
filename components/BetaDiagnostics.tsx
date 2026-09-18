@@ -10,6 +10,7 @@ export default function BetaDiagnostics() {
     <p>Ce navigateur uniquement, en mémoire pendant 30 minutes au maximum. Aucun tableau de bord de classe ni stockage durable. Aucun texte, mot, transcription ou audio n’est collecté ici.</p>
     <button className="mr-4 underline" onClick={()=>setSummary(betaJournal.aggregate())}>Actualiser les agrégats</button>
     <button className="underline" onClick={()=>{resetBetaDiagnostics();setSummary(null);}}>Effacer les diagnostics</button>
+    {summary && <p className="my-3 font-medium">{summary.events} événements · {summary.sessions} session(s) locale(s). Les compteurs de fournisseurs sont dans les journaux serveur, pas dans ce navigateur.</p>}
     {summary && <pre className="overflow-auto text-xs">{JSON.stringify(summary,null,2)}</pre>}
   </details>;
 }

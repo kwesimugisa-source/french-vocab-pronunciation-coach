@@ -17,7 +17,7 @@ export default function WeakPointsPanel({ weakPoints }: Props) {
         </h2>
 
         <p className="mt-1 text-sm text-slate-500">
-          Les mots et les sons à travailler apparaîtront ici après l’analyse.
+          Les écarts possibles entre les mots transcrits et le texte apparaîtront ici.
         </p>
       </div>
 
@@ -37,7 +37,7 @@ export default function WeakPointsPanel({ weakPoints }: Props) {
               <p className="mt-1 leading-6">{item.note}</p>
 
               <p className="mt-2 text-xs uppercase tracking-wide text-slate-500">
-                Niveau : {item.severity}
+                Priorité : {({low:"faible",medium:"moyenne",high:"élevée"})[item.severity]}
               </p>
             </div>
           ))

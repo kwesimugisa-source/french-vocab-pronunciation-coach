@@ -26,6 +26,8 @@ export default function ReadingControls({
 }: Props) {
   return (
     <section className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="text-lg font-semibold">À vous de parler</h2>
+      <p className="mb-4 mt-1 text-sm text-slate-600">Enregistrez votre lecture, arrêtez le microphone, puis analysez la transcription.</p>
       <PreparationNotice label={isAnalyzing ? "Analyse de la prononciation…" : null} />
       {targetLabel && <p className="mb-3 text-sm font-medium">{targetLabel}</p>}
       <div className="flex flex-wrap items-center gap-3">
@@ -35,7 +37,7 @@ export default function ReadingControls({
           disabled={isRecording || isBusy}
           className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isRecording ? "Enregistrement..." : "Commencer la lecture"}
+          {isRecording ? "Enregistrement..." : "Commencer l’enregistrement"}
         </button>
 
         <button
@@ -44,7 +46,7 @@ export default function ReadingControls({
           disabled={!isRecording}
           className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Arrêter
+          Arrêter l’enregistrement
         </button>
 
         <button
@@ -62,7 +64,7 @@ export default function ReadingControls({
           ? "Le microphone enregistre votre lecture."
           : hasRecording
           ? "Enregistrement terminé et prêt pour l’analyse."
-          : "Cliquez sur « Commencer la lecture » pour enregistrer votre lecture à voix haute.")}
+          : "Cliquez sur « Commencer l’enregistrement » pour enregistrer votre lecture à voix haute.")}
       </div>
       {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     </section>

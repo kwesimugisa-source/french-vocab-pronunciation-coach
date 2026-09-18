@@ -5,3 +5,13 @@
 body {
   @apply bg-slate-50 text-slate-900;
 }
+
+/* Controls retain native semantics and a visible keyboard path. Word buttons
+   stay inline so ordinary prose does not become a grid of touch targets. */
+button:not(.reading-word), select, summary { min-height: 44px; }
+button:focus-visible, select:focus-visible, summary:focus-visible, textarea:focus-visible, input:focus-visible {
+  outline: 2px solid #047857;
+  outline-offset: 3px;
+}
+select { max-width: 100%; }
+pre { overflow-wrap: anywhere; }
