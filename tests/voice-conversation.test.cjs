@@ -28,9 +28,9 @@ test("explicit source evidence overrides name associations; mixed cast reserves 
     assert.ok(![cast.narrator.voice, ...cast.chorus.voices].includes(member.voice));
   }
 });
-for (const name of ["Marie", "Sophie", "Jean", "David"]) test(`name ${name} alone never establishes presentation`, () => {
+for (const name of ["Marie", "Sophie", "Jean", "David"]) test(`name ${name}: source-only policy remains conservative; Theatre uses revised convention`, () => {
   assert.equal(sourcePresentation(name, []).presentation, "unspecified");
-  assert.equal(createTheatreCasting(parseTheatreItems(`${name}: Bonjour.`)).members[0].presentation, "unspecified");
+  assert.equal(createTheatreCasting(parseTheatreItems(`${name}: Bonjour.`)).members[0].presentation, ["Marie","Sophie"].includes(name) ? "female-presenting" : "male-presenting");
 });
 for (const descriptions of [["(Jean n’est pas une femme.)"], ["(Jean, une femme, peut-être.)"], ["(Jean, une femme, entre.)", "(Jean, un homme, entre.)"], ["(Jean est médecin.)"], ["(Jean sourit. Elle attend.)"]])
   test(`uncertain evidence abstains: ${descriptions.join(" ")}`, () => assert.equal(sourcePresentation("Jean", descriptions).presentation, "unspecified"));

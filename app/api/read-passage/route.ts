@@ -9,6 +9,7 @@ import { conversationTurns } from "../../../lib/conversation";
 import { readingMode } from "../../../lib/content-routing";
 import { isEffectiveType, MAX_TEXT_LENGTH, TTS_INPUT_LIMIT, validateIdentity } from "../../../lib/content-document";
 
+import { validateTheatreCharacters } from "../../../lib/theatre-characters";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -83,10 +84,17 @@ async function handlePost(req: Request) {
       }
     }
 
+    let theatreCharacters;
+    if (body.theatreCharacters !== undefined) {
+      try {
+        if (mode !== "theatre") throw new Error("Invalid mode");
+        theatreCharacters = validateTheatreCharacters(body.theatreCharacters, text);
+      } catch { return new Response("Distribution des personnages invalide.", {status:400}); }
+    }
     if (mode === "theatre") {
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
         speechToBase64({ client, ...input }),
-        { analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
+        { theatreCharacters, analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       return Response.json(scene);
     }

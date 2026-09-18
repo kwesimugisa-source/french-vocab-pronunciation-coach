@@ -1,5 +1,7 @@
 import { segmentExercises, TongueTwisters, validatePractice } from "./tongue-twisters";
 import type { ArticleData } from "./types";
+import { validateTheatreCharacters } from "./theatre-characters";
+import type { TheatreCharacter } from "./theatre-characters";
 
 export const CONTENT_TYPES = ["news", "opinion", "creative", "conversation", "academic", "everyday-life", "poetry", "theatre", "tongue-twisters"] as const;
 export type ContentType = typeof CONTENT_TYPES[number];
@@ -12,7 +14,7 @@ export const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"] as const;
 export type Detection = { confidence: "high" | "medium" | "low"; candidates: EffectiveType[]; evidence: string[] };
 export type SourceLine = { canonicalLine: number; originalLines: number[] };
 export type Normalization = { kind: "heading" | "pagination" | "wrap" | "newlines"; originalLines: number[]; detail: string };
-export type ContentIdentity = { documentId: string; revision: number; contentType: EffectiveType };
+export type ContentIdentity = { documentId: string; revision: number; contentType: EffectiveType; theatreCharacters?: TheatreCharacter[] };
 export type ContentDocument = ArticleData & ContentIdentity & {
   tongueTwisters?: TongueTwisters;
   origin: "generated" | "imported";
@@ -42,6 +44,10 @@ export function validateIdentity(value: unknown): asserts value is ContentIdenti
 export function validateDocument(value: unknown): asserts value is ContentDocument {
   validateArticle(value); validateIdentity(value);
   const v = value as ContentDocument;
+  if (v.theatreCharacters !== undefined) {
+    if (v.contentType !== "theatre" || v.origin !== "generated") throw new Error("Distribution incompatible avec le document.");
+    validateTheatreCharacters(v.theatreCharacters, v.text);
+  }
   if (!["generated", "imported"].includes(v.origin) || !["generated", "detected", "learner-override", "unknown"].includes(v.typeSource) ||
     typeof v.originalText !== "string" || !v.originalText.trim() || v.originalText.length > MAX_TEXT_LENGTH ||
     !v.detection || !["high", "medium", "low"].includes(v.detection.confidence) ||

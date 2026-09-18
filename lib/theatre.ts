@@ -1,4 +1,5 @@
 import { isChorusSpeaker, speakerIdentity } from "./theatre-speakers";
+import { isStageDirection } from "./theatre-structure";
 
 /** A dialogue turn is one logical item, even when it spans physical lines.
  * IDs are scene-local and deterministic for unchanged source text. They are not
@@ -62,7 +63,7 @@ export function parseTheatreItems(text: string): TheatreItem[] {
     const sourceLine = offset + 1;
     if (!line) return;
 
-    if (/^\(.+\)$/.test(line)) {
+    if (isStageDirection(line)) {
       append("stage", "NARRATOR", line, sourceLine);
       return;
     }

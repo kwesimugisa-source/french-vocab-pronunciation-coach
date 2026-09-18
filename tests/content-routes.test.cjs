@@ -21,7 +21,7 @@ function routes(output = { title: "Texte", text: "Bonjour à tous." }) {
 const request = body => new Request("http://localhost/api", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 for (const type of CONTENT_TYPES) test(`nine-mode route identity: ${type}`, async () => {
   const text = type === "theatre" ? "NORA: Bonjour.\nSAMIR: Salut." : "Date: lundi\nLieu: Paris\nMarie: Bonjour.\nDavid: Salut.";
-  const r = routes(type === "conversation" ? { title: "Texte", turns: [{ speakerLabel: "Marie", spokenText: "Bonjour." }, { speakerLabel: "David", spokenText: "Salut." }] } : type === "tongue-twisters" ? { title: "Texte", exercises: Array.from({ length: 5 }, (_, i) => `Trois gros rats gris jouent près du mur ${i + 1}.`) } : { title: "Texte", text });
+  const r = routes(type === "conversation" ? { title: "Texte", turns: [{ speakerLabel: "Marie", spokenText: "Bonjour." }, { speakerLabel: "David", spokenText: "Salut." }] } : type === "tongue-twisters" ? { title: "Texte", exercises: Array.from({ length: 5 }, (_, i) => `Trois gros rats gris jouent près du mur ${i + 1}.`) } : { title: "Texte", text, ...(type === "theatre" ? {characters:[{speakerId:"NORA",displayName:"NORA",voicePresentation:"female-presenting"},{speakerId:"SAMIR",displayName:"SAMIR",voicePresentation:"male-presenting"}]} : {}) });
   const response = await r.generate(request({ contentType: type, level: "A1" })); assert.equal(response.status, 200);
   const doc = await response.json(); assert.equal(doc.contentType, type); assert.equal(doc.level, "A1"); assert.equal(doc.typeSource, "generated");
   assert.match(doc.source, /généré par IA/); assert.match(r.calls[0].input[0].content, new RegExp(`Content type: ${type}`));

@@ -1,15 +1,8 @@
 import type { TheatreItem } from "./theatre";
 
-export const AMBIENCE_CATALOGUE = {
-  none: "Aucune", neutral_room: "Pièce calme", office: "Bureau", cafe: "Café",
-  classroom: "Salle de classe", kitchen: "Cuisine", fireplace: "Cheminée",
-  rain: "Pluie douce", thunderstorm: "Orage", wind: "Vent", forest: "Forêt",
-  garden_birds: "Jardin et oiseaux", seaside: "Bord de mer", night_insects: "Insectes nocturnes",
-  street: "Rue", traffic: "Circulation", market: "Marché", station: "Gare",
-  crowd: "Foule", theatre_auditorium: "Salle de théâtre", tavern: "Taverne",
-  ballroom: "Salle de bal", church: "Église", distant_battlefield: "Champ de bataille lointain",
-  harbour_ship: "Port ou navire", rural_village: "Village rural",
-} as const;
+import { ENVIRONMENT_LABELS, environmentAudioEntry, environmentId, resolveSemanticAudio } from "./semantic-audio";
+import type { AudioSource } from "./semantic-audio";
+export const AMBIENCE_CATALOGUE = ENVIRONMENT_LABELS;
 export type AmbienceKind = keyof typeof AMBIENCE_CATALOGUE;
 export type AmbienceStatus = "analyzed_no_ambience" | "detected_available" | "detected_unavailable" | "analysis_unavailable" | "playback_failed";
 export function ambienceStatus(recommendation: AmbienceRecommendation, analyzed: boolean): AmbienceStatus {
@@ -90,38 +83,9 @@ export function validateAmbience(value: unknown, items: readonly TheatreItem[]):
   return { environment: "rain", evidenceItemId: item.id, evidenceQuote: data.evidenceQuote };
 }
 
-export type AmbienceProvider = (kind: AmbienceKind) => Blob | null;
-/** Original procedural demonstration, no external recordings/licensing or API.
- * A quiet filtered noise bed, not a realistic production sound library. */
-function localNoise(kind: "rain" | "room" | "office"): Blob {
-  const rate = 16000, samples = rate * 4;
-  const bytes = new Uint8Array(44 + samples * 2), view = new DataView(bytes.buffer);
-  const label = (offset: number, text: string) => [...text].forEach((c, i) => { bytes[offset + i] = c.charCodeAt(0); });
-  label(0, "RIFF"); view.setUint32(4, bytes.length - 8, true); label(8, "WAVEfmt ");
-  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true); label(36, "data"); view.setUint32(40, samples * 2, true);
-  let seed = 12345, smooth = 0;
-  for (let i = 0; i < samples; i++) {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    smooth = smooth * 0.65 + (seed / 0xffffffff * 2 - 1) * 0.35;
-    const fade = Math.min(1, i / 800, (samples - 1 - i) / 800);
-    const t = i / rate;
-    // Office: a fuller ventilation bed plus soft periodic mechanical texture.
-    // No voices, identifiable recordings, startling transients or licensed assets.
-    const office = smooth * (9000 + 1800 * Math.sin(2*Math.PI*0.5*t)) +
-      Math.sin(2*Math.PI*120*t) * 900 + Math.sin(2*Math.PI*240*t) * 350;
-    const sample = kind === "office" ? office : kind === "rain" ? smooth * 7000 : smooth * 900 + Math.sin(i * 2 * Math.PI * 100 / rate) * 180;
-    view.setInt16(44 + i * 2, Math.round(sample * fade), true);
-  }
-  return new Blob([bytes], { type: "audio/wav" });
-}
-// Only appropriate base beds. No phones, speech, printers or one-shot effects.
-const localProviders: Partial<Record<AmbienceKind, () => Blob>> = {
-  rain: () => localNoise("rain"), neutral_room: () => localNoise("room"), office: () => localNoise("office"),
-};
-export const hasLocalAmbienceProvider = (kind: AmbienceKind): boolean => Object.hasOwn(localProviders, kind);
-export const localAmbienceProvider: AmbienceProvider = kind => hasLocalAmbienceProvider(kind) ? localProviders[kind]!() : null;
+export type AmbienceProvider = (kind: AmbienceKind) => AudioSource;
+export const hasLocalAmbienceProvider = (kind: AmbienceKind): boolean => !!environmentAudioEntry(kind)?.provider;
+export const localAmbienceProvider: AmbienceProvider = kind => resolveSemanticAudio(environmentId(kind));
 export function ambienceDescription(kind: AmbienceKind): string {
   if (kind === "none") return "Aucune ambiance adaptée détectée.";
   return `${AMBIENCE_CATALOGUE[kind]} — ${hasLocalAmbienceProvider(kind)

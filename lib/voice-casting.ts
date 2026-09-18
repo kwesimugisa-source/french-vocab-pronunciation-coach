@@ -13,7 +13,7 @@ export const PRESENTATION_VOICES: Record<Presentation, readonly Voice[]> = {
   "male-presenting": ["ash", "ballad", "onyx", "echo", "verse", "cedar"],
   unspecified: TTS_VOICES,
 };
-export type PresentationEvidence = { presentation: Presentation; evidence: string[] };
+export type PresentationEvidence = { presentation: Presentation; evidence: string[]; excludedVoices?: readonly Voice[] };
 export const unspecified = (): PresentationEvidence => ({ presentation: "unspecified", evidence: [] });
 
 /** Intentionally narrow, affirmative cast descriptions only. Names are lookup
@@ -26,7 +26,7 @@ export function sourcePresentation(speaker: string, descriptions: readonly strin
   const pattern = new RegExp(`^(?:\\(\\s*)?${name}\\s*(?:,|:|—|–|\\best)\\s*(?:(?:un|une|le|la)\\s+)?(?:jeune\\s+)?(femme|homme|fille|garçon|mère|père|sœur|frère|épouse|époux|personnage féminin|personnage masculin)(?=[\\s,.;)]|$)`, "u");
   const found: { presentation: Presentation; evidence: string }[] = [];
   for (const source of descriptions) {
-    const text = normalize(source);
+    const text = normalize(source).replace(/^\[/u, "(").replace(/\]$/u, ")");
     // Avoid quoted/hypothetical/negated character descriptions, even when a
     // positive-looking prefix exists. A missed classification is safe.
     if (/[?«»"]|\b(?:pas|non|jamais|ni|si|serait|semble|peut-être|contrairement)\b/u.test(text)) continue;
@@ -37,7 +37,7 @@ export function sourcePresentation(speaker: string, descriptions: readonly strin
   return { presentation: found[0].presentation, evidence: found.map(x => x.evidence) };
 }
 
-export function assignVoices(speakers: readonly string[], evidence: ReadonlyMap<string, PresentationEvidence>, excluded: readonly Voice[] = []): Map<string, Voice> {
+export function assignVoices(speakers: readonly string[], evidence: ReadonlyMap<string, PresentationEvidence>, excluded: readonly Voice[] = [], variedFallback = false): Map<string, Voice> {
   const available = TTS_VOICES.filter(v => !excluded.includes(v));
   if (!available.length) throw new Error("Aucune voix disponible.");
   const assigned = new Map<string, Voice>(), uses = new Map<Voice, number>();
@@ -45,9 +45,20 @@ export function assignVoices(speakers: readonly string[], evidence: ReadonlyMap<
   const ordered = [...new Set(speakers)].sort().sort((a, b) =>
     Number((evidence.get(a)?.presentation ?? "unspecified") === "unspecified") -
     Number((evidence.get(b)?.presentation ?? "unspecified") === "unspecified"));
+  let unknownIndex = 0;
   for (const speaker of ordered) {
-    const preferred = PRESENTATION_VOICES[evidence.get(speaker)?.presentation ?? "unspecified"].filter(v => available.includes(v));
-    const pool = preferred.length ? preferred : available;
+    const allowed = available.filter(v => !evidence.get(speaker)?.excludedVoices?.includes(v));
+    if (!allowed.length) throw new Error("Aucune voix compatible avec les contraintes du personnage.");
+    if (variedFallback && (evidence.get(speaker)?.presentation ?? "unspecified") === "unspecified") {
+      const preferred = PRESENTATION_VOICES[unknownIndex++ % 2 ? "male-presenting" : "female-presenting"];
+      const unused = allowed.filter(v => !uses.has(v));
+      const candidates = unused.length ? unused : allowed;
+      const pool = candidates.filter(v => preferred.includes(v));
+      const voice = [...(pool.length ? pool : candidates)].sort((a,b) => (uses.get(a) ?? 0) - (uses.get(b) ?? 0))[0];
+      assigned.set(speaker, voice); uses.set(voice, (uses.get(voice) ?? 0) + 1); continue;
+    }
+    const preferred = PRESENTATION_VOICES[evidence.get(speaker)?.presentation ?? "unspecified"].filter(v => allowed.includes(v));
+    const pool = preferred.length ? preferred : allowed;
     const voice = [...pool].sort((a, b) => (uses.get(a) ?? 0) - (uses.get(b) ?? 0))[0];
     assigned.set(speaker, voice); uses.set(voice, (uses.get(voice) ?? 0) + 1);
   }

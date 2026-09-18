@@ -74,7 +74,7 @@ test("analysis timeout/failure keeps complete generation and silent ambience fal
 });
 
 test("provider catalogue is honest: office room tone differs from rain and unsupported settings are silent", async () => {
-  assert.deepEqual(Object.keys(AMBIENCE_CATALOGUE).filter(hasLocalAmbienceProvider), ["neutral_room", "office", "rain"]);
+  assert.deepEqual(Object.keys(AMBIENCE_CATALOGUE).filter(hasLocalAmbienceProvider), ["neutral_room", "office", "rain", "station"]);
   const rain = Buffer.from(await localAmbienceProvider("rain").arrayBuffer());
   const room = Buffer.from(await localAmbienceProvider("office").arrayBuffer());
   assert.notDeepEqual(room, rain);

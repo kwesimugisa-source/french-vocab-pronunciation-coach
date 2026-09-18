@@ -47,7 +47,8 @@ test("real imported excerpts retain exact words and ordered physical source line
   const cast = createTheatreCasting(items);
   assert.deepEqual(createTheatreCasting([...items].reverse()), cast);
   assert.deepEqual(cast.members.filter(i => i.role === "character").map(i => [i.speaker, i.voice]),
-    [["L'AGENT", "alloy"], ["LE JOUEUR", "ash"]]);
+    [["L'AGENT", "coral"], ["LE JOUEUR", "ash"]]);
+  assert.ok(cast.members.filter(i=>i.role==="character").every(i=>i.presentation==="unspecified"), "varied voices do not invent character identity");
 });
 
 test("exact alias matching excludes ambiguous groups and substring names across every consumer", async () => {

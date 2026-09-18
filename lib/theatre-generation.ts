@@ -5,6 +5,7 @@ import type { TheatreVoice } from "./theatre-casting";
 import { dramaticInstructions, prepareDramaticDirection } from "./theatre-direction";
 import type { SceneAnalyzer } from "./theatre-direction";
 import { noAmbience, validateAmbience } from "./theatre-ambience";
+import { validateTheatreCharacters } from "./theatre-characters";
 import { theatreAnalysisCache } from "./theatre-analysis-cache";
 
 // Three workers keep service pressure modest while avoiding fully serial TTS.
@@ -31,10 +32,11 @@ export async function generateTheatreResponse(
   text: string,
   playbackSpeed: number,
   synthesize: (input: SpeechInput) => Promise<string>,
-  options: { analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean } = {}
+  options: { theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean } = {}
 ): Promise<TheatreResponse> {
   const items = parseTheatreItems(text);
-  const casting = createTheatreCasting(items, options.narratorVoice);
+  const metadata = options.theatreCharacters === undefined ? [] : validateTheatreCharacters(options.theatreCharacters, text);
+  const casting = createTheatreCasting(items, options.narratorVoice, metadata);
   const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text);
   const prior = validateAmbience(options.ambienceDecision, items);
   const ambienceDecision = prior.confidence === "high" ? prior : undefined;

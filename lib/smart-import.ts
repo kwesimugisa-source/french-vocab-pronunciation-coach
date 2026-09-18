@@ -1,3 +1,4 @@
+import { isStageDirection } from "./theatre-structure";
 import { segmentExercises } from "./tongue-twisters";
 import { isChorusSpeaker, speakerIdentity } from "./theatre-speakers";
 import { ContentDocument, Detection, EffectiveType, MAX_TEXT_LENGTH, Normalization, validateDocument } from "./content-document";
@@ -17,7 +18,7 @@ export function detectContent(text: string): Detection & { contentType: Effectiv
   const lines = text.split(/\r\n|\r|\n/).map(l => l.trim());
   const labels = lines.map(heading).filter((x): x is string => !!x);
   const turns = lines.filter(l => heading(l) && /[:：]/u.test(l)).length;
-  const stage = lines.some(l => /^\(.+\)$/u.test(l));
+  const stage = lines.some(isStageDirection);
   const dramatic = lines.some(l => /^(ACTE|SC[ÈE]NE)\s+[\dIVX]+/iu.test(l));
   const chorus = labels.some(isChorusSpeaker);
   const distinct = new Set(labels.map(speakerIdentity)).size;
@@ -25,7 +26,7 @@ export function detectContent(text: string): Detection & { contentType: Effectiv
   if (/^(?:virelangues?\b|exercice(?:\s+\d+)?\s+du\s+son\b)/imu.test(text) && !dramatic && !chorus)
     return result("tongue-twisters", "high", ["Structure explicite d’exercices phonétiques"]);
   if (labels.length >= 2 && (dramatic || chorus || (stage && distinct >= 2)))
-    return result("theatre", "high", ["Répliques et structure dramatique", ...(stage ? ["Didascalies entre parenthèses"] : []), ...(chorus ? ["Chœur"] : [])]);
+    return result("theatre", "high", ["Répliques et structure dramatique", ...(stage ? ["Didascalies délimitées"] : []), ...(chorus ? ["Chœur"] : [])]);
   if (/\b(virelangue|exercice du son|répétez.*(?:son|fois))s?\b/iu.test(text) || /les chaussettes de l.archiduchesse|un chasseur sachant chasser/iu.test(text))
     return result("tongue-twisters", "high", ["Exercice phonétique explicite"]);
   if (turns >= 2 && distinct >= 2 && lines.filter(Boolean).every(l => !!heading(l)))
@@ -68,7 +69,8 @@ export function importDocument(originalText: string, documentId: string, overrid
   if (originalText.includes("\r")) actions.push({ kind: "newlines", originalLines: rows.map((_, i) => i + 1), detail: "Fins de ligne uniformisées" });
   // Repeated boundary markers are evidence of pagination, never bare numbers alone.
   const marker = (s: string) => s.trim().match(/^(?:Page\s+(\d{1,3})|[-—]\s*(\d{1,3})\s*[-—]|(\d{1,3}))$/iu);
-  const boundaries = rows.map((r, i) => ({ i, m: marker(r.text) })).filter(({ i, m }) => m && i > 0 && i < rows.length - 1 && !rows[i - 1].text.trim() && !rows[i + 1].text.trim());
+  const boundaries = rows.map((r, i) => ({ i, m: marker(r.text) })).filter(({ i, m }) =>
+    m && i > 0 && i < rows.length - 1 && (type === "theatre" || (!rows[i - 1].text.trim() && !rows[i + 1].text.trim())));
   const number = (m: RegExpMatchArray) => Number(m[1] ?? m[2] ?? m[3]);
   const remove = new Set<number>();
   for (let b = 0; b < boundaries.length; b++) {
@@ -77,7 +79,14 @@ export function importDocument(originalText: string, documentId: string, overrid
     const previous = rows[before]?.text.trim() ?? "";
     const numericAnswer = /[?？]\s*$/u.test(previous) || (!!heading(previous) && !/[:：].+\S/u.test(previous));
     const sequential = (b > 0 && number(m!) === number(boundaries[b - 1].m!) + 1) || (b + 1 < boundaries.length && number(boundaries[b + 1].m!) === number(m!) + 1);
-    if (!numericAnswer && (m![1] || m![2] || (sequential && /[.!)]\s*$/u.test(previous)))) {
+    let after = i + 1; while (after < rows.length && !rows[after].text.trim()) after++;
+    const following = rows[after]?.text.trim() ?? "";
+    const nextUnit = !!heading(following) || isStageDirection(following) || act.test(following);
+    const complete = isStageDirection(previous) || /[.!][»”"']?\s*$/u.test(previous);
+    const listItem = /^(?:\d+[.)]|[-*•])\s/u.test(previous);
+    const structuralPage = type === "theatre" && sequential && nextUnit && complete && !listItem;
+    const legacyPage = type !== "theatre" && sequential && /[.!)]\s*$/u.test(previous);
+    if (!numericAnswer && (m![1] || m![2] || structuralPage || legacyPage)) {
       remove.add(i); actions.push({ kind: "pagination", originalLines: [i + 1], detail: "Marqueur de page isolé retiré" });
     } else warnings.push(`Ligne ${i + 1} : nombre isolé conservé (pagination incertaine).`);
   }
@@ -90,10 +99,10 @@ export function importDocument(originalText: string, documentId: string, overrid
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (!row.text.trim()) continue;
-      if (/^\s*\(/u.test(row.text)) { if (!awaitingSpeech) inDialogue = false; continue; }
+      if (isStageDirection(row.text)) { if (!awaitingSpeech) inDialogue = false; continue; }
       const h = awaitingSpeech ? null : heading(row.text);
       awaitingSpeech = false;
-      const nextSpoken = rows.slice(i + 1).find(r => r.text.trim() && !/^\s*\(/u.test(r.text));
+      const nextSpoken = rows.slice(i + 1).find(r => r.text.trim() && !isStageDirection(r.text));
       const bareConfirmed = !!nextSpoken && !heading(nextSpoken.text) && !act.test(nextSpoken.text.trim());
       if (h && (isChorusSpeaker(h) || (detection.contentType === "theatre" && (/[:：]/u.test(row.text) || bareConfirmed)) || (identities.get(speakerIdentity(h)) ?? 0) >= 2)) {
         const colon = row.text.search(/[:：]/u);
@@ -101,7 +110,7 @@ export function importDocument(originalText: string, documentId: string, overrid
         if (canonical !== row.text) actions.push({ kind: "heading", originalLines: row.originals, detail: "En-tête de personnage normalisé" });
         row.text = canonical; inDialogue = true; awaitingSpeech = colon < 0 || !row.text.slice(row.text.indexOf(":") + 1).trim();
       }
-      if (/^\s*\(/u.test(row.text) || act.test(row.text.trim())) { inDialogue = false; continue; }
+      if (isStageDirection(row.text) || act.test(row.text.trim())) { inDialogue = false; continue; }
       const next = rows[i + 1];
       if (inDialogue && /(?:^|\s)(?:non|demi|anti|ex)-$/u.test(row.text) && next && /^\p{Ll}+/u.test(next.text) && !heading(next.text)) {
         row.text += next.text; row.originals = [...row.originals, ...next.originals];

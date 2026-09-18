@@ -165,7 +165,7 @@ export class ReadingPlaybackSession {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
           method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders() },
-          body: JSON.stringify({ text, speed, ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType } : {}) }), signal: request.signal,
+          body: JSON.stringify({ text, speed, ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
         if (!current()) return;
         if (!response.ok) {
