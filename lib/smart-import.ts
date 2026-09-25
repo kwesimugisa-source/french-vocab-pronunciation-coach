@@ -1,3 +1,4 @@
+import { DEFAULT_DOCUMENT_LANGUAGE } from "./document-language";
 import { isStageDirection } from "./theatre-structure";
 import { segmentExercises } from "./tongue-twisters";
 import { isChorusSpeaker, speakerIdentity } from "./theatre-speakers";
@@ -120,7 +121,7 @@ export function importDocument(originalText: string, documentId: string, overrid
     }
   }
   const doc: ContentDocument = { title: "Texte importé", source: "Utilisateur", text: rows.map(r => r.text).join("\n"),
-    originalText, documentId, revision, origin: "imported", contentType: type, typeSource: override ? "learner-override" : type === "unknown" ? "unknown" : "detected",
+    originalText, documentId, revision, language: DEFAULT_DOCUMENT_LANGUAGE, origin: "imported", contentType: type, typeSource: override ? "learner-override" : type === "unknown" ? "unknown" : "detected",
     detection, normalization: actions, warnings, sourceMap: rows.map((r, i) => ({ canonicalLine: i + 1, originalLines: r.originals })) };
   if (type === "tongue-twisters") doc.tongueTwisters = segmentExercises(doc.text);
   validateDocument(doc); return doc;

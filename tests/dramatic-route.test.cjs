@@ -142,7 +142,7 @@ test("directed response works with unchanged playback, cached replay, practice, 
   assert.deepEqual(env.revoked, env.created.map(({ url }) => url));
 });
 
-test("ordinary reading and poetry never invoke dramatic analysis or add instructions", async () => {
+test("ordinary reading and poetry receive only pronunciation context, never dramatic analysis", async () => {
   const { post, analysisCalls, speechCalls } = routeWith(async () => assert.fail("no scene analysis"));
   for (const text of ["Un texte ordinaire.", "Un\nDeux\nTrois\n\nQuatre\nCinq\nSix"]) {
     const response = await post(request(text, "slow", text.includes("\n") ? "poetry" : "news"));
@@ -150,5 +150,5 @@ test("ordinary reading and poetry never invoke dramatic analysis or add instruct
     assert.equal(response.headers.get("content-type"), "audio/mpeg");
   }
   assert.equal(analysisCalls.length, 0);
-  assert.ok(speechCalls.every(({ body }) => body.instructions === undefined && body.speed === 0.85 && body.voice === "alloy"));
+  assert.ok(speechCalls.every(({ body }) => body.instructions === load("lib/document-language.ts").pronunciationInstructions("fr") && body.speed === 0.85 && body.voice === "alloy"));
 });

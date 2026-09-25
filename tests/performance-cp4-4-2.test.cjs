@@ -52,7 +52,7 @@ for(const style of ["clarte","naturel"]) for(const [speed,value] of Object.entri
  }));
 test("invalid Theatre style fails before model/TTS calls; non-Theatre styles do not affect ordinary audio",()=>withKey(async()=>{
  const r=route();const body={text:interjections,contentType:"theatre",performanceStyle:"invented"};const response=await r.post(new Request("http://localhost/api",{method:"POST",body:JSON.stringify(body)}));assert.equal(response.status,400);assert.equal(r.calls.length,0);assert.equal(r.analyses.length,0);
- const ordinary=await r.post(new Request("http://localhost/api",{method:"POST",body:JSON.stringify({text:"Bonjour à tous.",contentType:"news",performanceStyle:"naturel",speed:"slow"})}));assert.equal(ordinary.status,200);assert.equal(r.calls[0].instructions,undefined);assert.equal(r.calls[0].speed,0.85);
+ const ordinary=await r.post(new Request("http://localhost/api",{method:"POST",body:JSON.stringify({text:"Bonjour à tous.",contentType:"news",performanceStyle:"naturel",speed:"slow"})}));assert.equal(ordinary.status,200);assert.equal(r.calls[0].instructions,load("lib/document-language.ts").pronunciationInstructions("fr"));assert.equal(r.calls[0].speed,0.85);
 }));
 test("style switch cancels stale preparation and never accepts mismatched cached audio",async()=>{
  const pending=[],bodies=[],env=environment();const s=new ReadingPlaybackSession(env,(_url,options)=>{const d=deferred();pending.push(d);bodies.push(JSON.parse(options.body));return d.promise;});const doc=importDocument(interjections,"switch");

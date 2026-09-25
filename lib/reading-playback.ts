@@ -1,4 +1,5 @@
 import { theatreStyle, TheatreStyle } from "./theatre-performance";
+import { documentLanguage } from "./document-language";
 import { ContentIdentity, validateIdentity } from "./content-document";
 import { browserPlaybackEnvironment, TheatrePlaybackController } from "./theatre-playback";
 import type { PlaybackAudio, PlaybackEnvironment, TheatrePlaybackSnapshot } from "./theatre-playback";
@@ -160,6 +161,7 @@ export class ReadingPlaybackSession {
     if (identity) {
       try { validateIdentity(identity); } catch { this.update({ error: "Identité du document invalide." }); return; }
     }
+    const language = documentLanguage(identity?.language);
     const performanceStyle = identity?.contentType === "theatre" ? this.snapshot.performanceStyle : "clarte";
     const request = new AbortController();
     this.request = request;
@@ -179,7 +181,7 @@ export class ReadingPlaybackSession {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
           method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders() },
-          body: JSON.stringify({ text, speed, ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
+          body: JSON.stringify({ text, speed, language, ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
         if (!current()) return;
         if (!response.ok) {

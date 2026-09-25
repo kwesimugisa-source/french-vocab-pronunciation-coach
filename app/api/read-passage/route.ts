@@ -1,5 +1,6 @@
 import { theatreStyle } from "../../../lib/theatre-performance";
 import OpenAI from "openai";
+import { documentLanguage, DocumentLanguage, pronunciationInstructions } from "../../../lib/document-language";
 import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
@@ -20,12 +21,14 @@ async function speechToBase64({
   voice,
   speed,
   instructions,
+  language,
 }: {
   client: OpenAI;
   text: string;
   voice: TheatreVoice;
   speed: number;
   instructions: string;
+  language: DocumentLanguage;
 }) {
   if (text.length > TTS_INPUT_LIMIT) throw new Error("Réplique trop longue pour une requête audio.");
   const audioResponse = await providerCall("tts", () => client.audio.speech.create({
@@ -33,7 +36,7 @@ async function speechToBase64({
     voice,
     input: text,
     speed,
-    instructions,
+    instructions: pronunciationInstructions(language, instructions),
   }), text.length);
 
   const buffer = Buffer.from(await audioResponse.arrayBuffer());
@@ -58,6 +61,9 @@ async function handlePost(req: Request) {
       try { validateIdentity(body); } catch { return new Response("Identité du document invalide.", { status: 400 }); }
     }
     const { text, speed = "normal" } = body;
+    let language: DocumentLanguage;
+    try { language = documentLanguage(body.language); }
+    catch { return new Response("Langue du document non prise en charge.", { status: 400 }); }
     if (!["very-slow", "slow", "normal", "fast"].includes(speed)) return new Response("Vitesse invalide.", { status: 400 });
 
     const speedMap: Record<string, number> = {
@@ -79,7 +85,7 @@ async function handlePost(req: Request) {
         return new Response(error instanceof Error ? error.message : "Conversation invalide.", { status: 400 });
       }
       try {
-        return Response.json(await generateConversation(text, playbackSpeed, input => speechToBase64({ client, ...input })));
+        return Response.json(await generateConversation(text, playbackSpeed, input => speechToBase64({ client, language, ...input })));
       } catch (error) {
         return new Response(error instanceof Error ? error.message : "Génération de conversation impossible.", { status: 500 });
       }
@@ -97,7 +103,7 @@ async function handlePost(req: Request) {
       try { performanceStyle = theatreStyle(body.performanceStyle); }
       catch { return new Response("Style théâtral invalide.", {status:400}); }
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
-        speechToBase64({ client, ...input }),
+        speechToBase64({ client, language, ...input }),
         { performanceStyle, theatreCharacters, analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       return Response.json(scene);
@@ -109,6 +115,7 @@ async function handlePost(req: Request) {
       voice: "alloy",
       input: text,
       speed: playbackSpeed,
+      instructions: pronunciationInstructions(language),
     }), text.length);
 
     const buffer = await audioResponse.arrayBuffer();

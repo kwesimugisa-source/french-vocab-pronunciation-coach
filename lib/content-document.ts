@@ -1,5 +1,6 @@
 import { segmentExercises, TongueTwisters, validatePractice } from "./tongue-twisters";
 import type { ArticleData } from "./types";
+import { DEFAULT_DOCUMENT_LANGUAGE, documentLanguage, DocumentLanguage } from "./document-language";
 import { validateTheatreCharacters } from "./theatre-characters";
 import type { TheatreCharacter } from "./theatre-characters";
 
@@ -14,7 +15,7 @@ export const LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"] as const;
 export type Detection = { confidence: "high" | "medium" | "low"; candidates: EffectiveType[]; evidence: string[] };
 export type SourceLine = { canonicalLine: number; originalLines: number[] };
 export type Normalization = { kind: "heading" | "pagination" | "wrap" | "newlines"; originalLines: number[]; detail: string };
-export type ContentIdentity = { documentId: string; revision: number; contentType: EffectiveType; theatreCharacters?: TheatreCharacter[] };
+export type ContentIdentity = { documentId: string; revision: number; contentType: EffectiveType; language?: DocumentLanguage; theatreCharacters?: TheatreCharacter[] };
 export type ContentDocument = ArticleData & ContentIdentity & {
   tongueTwisters?: TongueTwisters;
   origin: "generated" | "imported";
@@ -40,6 +41,7 @@ export function validateIdentity(value: unknown): asserts value is ContentIdenti
   const v = value as ContentIdentity | null;
   if (!v || typeof v.documentId !== "string" || !v.documentId.trim() || v.documentId.length > 100 ||
     !Number.isSafeInteger(v.revision) || v.revision < 1 || !isEffectiveType(v.contentType)) throw new Error("Identité du document invalide.");
+  documentLanguage(v.language);
 }
 export function validateDocument(value: unknown): asserts value is ContentDocument {
   validateArticle(value); validateIdentity(value);
@@ -78,7 +80,7 @@ export function sourceMap(text: string): SourceLine[] { return text.split("\n").
 export function generatedDocument(article: unknown, contentType: ContentType, level: string, documentId: string): ContentDocument {
   validateArticle(article);
   if (!isContentType(contentType) || !LEVELS.includes(level as typeof LEVELS[number])) throw new Error("Type ou niveau invalide.");
-  const doc: ContentDocument = { ...article, level, documentId, revision: 1, contentType, origin: "generated", originalText: article.text,
+  const doc: ContentDocument = { ...article, level, documentId, revision: 1, contentType, language: DEFAULT_DOCUMENT_LANGUAGE, origin: "generated", originalText: article.text,
     typeSource: "generated", detection: { confidence: "high", candidates: [contentType], evidence: ["Type demandé à la génération"] },
     normalization: [], warnings: [], sourceMap: sourceMap(article.text) };
   if (contentType === "tongue-twisters") doc.tongueTwisters = segmentExercises(doc.text);

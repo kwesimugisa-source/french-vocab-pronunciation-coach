@@ -114,7 +114,7 @@ for (const [mode, text] of [
       assert.equal(response.headers.get("content-type"), "audio/mpeg");
       assert.equal(response.headers.get("x-reading-mode"), mode);
       assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
-      assert.deepEqual(calls, [{ model: "gpt-4o-mini-tts", voice: "alloy", input: text, speed: expected }]);
+      assert.deepEqual(calls, [{ model: "gpt-4o-mini-tts", voice: "alloy", input: text, speed: expected, instructions: createLoader()("lib/document-language.ts").pronunciationInstructions("fr") }]);
     });
   }
 }

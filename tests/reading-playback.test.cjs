@@ -12,7 +12,7 @@ test("rapid Play actions share one generation; replay uses cached audio without 
   assert.equal(session.getSnapshot().busy, true);
   await Promise.all([session.start(source, "slow"), session.start(source, "slow")]);
   assert.equal(calls.length, 1);
-  assert.deepEqual(JSON.parse(calls[0][1].body), { text: source, speed: "slow" });
+  assert.deepEqual(JSON.parse(calls[0][1].body), { text: source, speed: "slow", language: "fr" });
   response.resolve(Response.json(scene())); await first;
   session.theatre.replay(); session.theatre.replay();
   assert.equal(calls.length, 1);
@@ -80,7 +80,7 @@ for (const [mode, text] of [
   ["poetry", "Un vers\nDeux vers\nTrois vers\n\nQuatre vers\nCinq vers\nSix vers"],
 ]) {
   for (const speed of ["very-slow", "slow", "normal", "fast"]) {
-    test(`${mode} ${speed}: same request, one blob/Audio, automatic completion and stop cleanup`, async () => {
+    test(`${mode} ${speed}: French-anchored request, one blob/Audio, automatic completion and stop cleanup`, async () => {
       const env = environment(), requests = [];
       const bytes = new Uint8Array([0xff, 0xfb, 1, 2]);
       const session = new ReadingPlaybackSession(env, async (url, options) => {
@@ -88,7 +88,7 @@ for (const [mode, text] of [
         return new Response(bytes, { headers: { "Content-Type": "audio/mpeg", "X-Reading-Mode": mode } });
       });
       await session.start(text, speed);
-      assert.deepEqual(requests, [{ url: "/api/read-passage", body: { text, speed } }]);
+      assert.deepEqual(requests, [{ url: "/api/read-passage", body: { text, speed, language: "fr" } }]);
       assert.equal(session.getSnapshot().mode, "ordinary");
       assert.equal(env.audios.length, 1);
       assert.deepEqual(new Uint8Array(await env.created[0].blob.arrayBuffer()), bytes);
