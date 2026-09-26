@@ -7,12 +7,12 @@ export class RequestGate {
   private total = 0;
   private active = 0;
   private clients = new Map<string, { count: number; active: Set<string> }>();
-  constructor(private now = Date.now, private limit = 120, private concurrency = 8) {}
+  constructor(private now = Date.now, private limit = 120, private concurrency = 8, private clientLimit = 30) {}
   acquire(session: string | null, operation: string): (() => void) | null {
     if (this.now()-this.window >= 60_000) { this.window=this.now(); this.total=0; for (const [id,c] of this.clients) { c.count=0; if (!c.active.size) this.clients.delete(id); } }
     const id = session && /^[0-9a-f-]{36}$/i.test(session) ? session : null;
     const c = id ? this.clients.get(id) ?? {count:0, active:new Set<string>()} : null;
-    if (this.total >= this.limit || this.active >= this.concurrency || (c && (c.count >= 30 || c.active.has(operation)))) return null;
+    if (this.total >= this.limit || this.active >= this.concurrency || (c && (c.count >= this.clientLimit || c.active.has(operation)))) return null;
     this.total++; this.active++;
     if (c && id) { c.count++; c.active.add(operation); this.clients.set(id,c); }
     let released = false;
@@ -23,16 +23,28 @@ const gate = new RequestGate();
 let reportedAt=0;
 /** Private process inspection / owner-controlled deployment logs only. No HTTP route. */
 export function serverDiagnostics() { return betaJournal.aggregate(); }
-export function protectedRoute(operation: NonNullable<BetaData["operation"]>, handler: (req: Request) => Promise<Response>) {
+export function protectedRoute(operation: NonNullable<BetaData["operation"]>, handler: (req: Request) => Promise<Response>, options: { gate?: RequestGate; deadlineMs?: number } = {}) {
   return async (req: Request): Promise<Response> => {
     // Same-origin browser requests only; no IP identity or fingerprinting.
     const origin = req.headers.get("origin");
     if (origin && origin !== new URL(req.url).origin) return Response.json({ code:"INVALID_INPUT", error:"Demande non autorisée." }, {status:403});
     const length = Number(req.headers.get("content-length") ?? 0);
     if (length > (operation === "pronunciation" ? 10_000_000 : 500_000)) return Response.json({code:"INVALID_INPUT",error:"Demande trop volumineuse."},{status:413});
-    const release = gate.acquire(req.headers.get("x-beta-session"), operation);
+    const release = (options.gate ?? gate).acquire(req.headers.get("x-beta-session"), operation);
     if (!release) { betaJournal.emit({name:"rate_limit",operation,status:"failed",code:"RATE_LIMITED"}); return Response.json({code:"RATE_LIMITED",error:RATE_MESSAGE},{status:429,headers:{"Retry-After":"60"}}); }
-    try {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.signal.addEventListener("abort", abort, {once:true});
+    if(req.signal.aborted) abort();
+    const timer = options.deadlineMs ? setTimeout(abort, options.deadlineMs) : undefined;
+    let abortListener: () => void = () => {};
+    const cancelled = new Promise<Response>(resolve => {
+      abortListener = () => { release(); resolve(Response.json({code:"PREPARATION_ABORTED",error:"Préparation interrompue. Réessayez cet élément."},{status:408})); };
+      controller.signal.addEventListener("abort",abortListener,{once:true});
+      if(controller.signal.aborted) abortListener();
+    });
+    const run = async () => {
+      controller.signal.throwIfAborted();
       // Enforce the actual body size too, including chunked requests without a
       // Content-Length. Bound memory before JSON/form parsing or provider work.
       const reader=req.body?.getReader(), chunks: Uint8Array[]=[];
@@ -44,12 +56,15 @@ export function protectedRoute(operation: NonNullable<BetaData["operation"]>, ha
         chunks.push(part.value);
       }
       const body=new Uint8Array(size); let offset=0; for(const chunk of chunks) {body.set(chunk,offset);offset+=chunk.length;}
-      const response=await handler(new Request(req.url,{method:req.method,headers:req.headers,body,signal:req.signal}));
+      const response=await handler(new Request(req.url,{method:req.method,headers:req.headers,body,signal:controller.signal}));
       if(!response.ok) betaJournal.emit({name:"operation",operation,status:"failed",code:response.status<500?"INVALID_INPUT":"PROVIDER_FAILED"});
       return response;
-    }
+    };
+    try { return await Promise.race([run(),cancelled]); }
     catch { betaJournal.emit({name:"operation",operation,status:"failed",code:"PROVIDER_FAILED"}); return Response.json({code:"PROVIDER_FAILED",error:"Service momentanément indisponible. Réessayez."},{status:500}); }
     finally {
+      clearTimeout(timer); req.signal.removeEventListener("abort",abort); controller.signal.removeEventListener("abort",abortListener);
+      controller.abort();
       release();
       if(process.env.NODE_ENV==="production" && Date.now()-reportedAt>=60_000) {
         reportedAt=Date.now();

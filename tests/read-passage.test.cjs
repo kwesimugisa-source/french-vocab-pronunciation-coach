@@ -10,7 +10,7 @@ function routeWith(speech) {
   class MockOpenAI {
     constructor() { this.audio = { speech: { create: speech } }; }
   }
-  return createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST;
+  return require('./complete-reading.cjs')(createLoader({ openai: MockOpenAI }));
 }
 
 function request(text, speed, contentType = "theatre") {
@@ -26,7 +26,7 @@ const source = (count) => Array.from({ length: count }, (_, i) =>
 ).join("\n");
 
 for (const count of [39, 40, 41, 60, 100]) {
-  test(`POST returns all ${count} ordered theatre items including stage directions`, async () => {
+  test(`bounded requests collect all ${count} ordered theatre items including stage directions`, async () => {
     let active = 0;
     let peak = 0;
     const calls = [];
@@ -42,7 +42,7 @@ for (const count of [39, 40, 41, 60, 100]) {
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type"), /application\/json/);
     const data = await response.json();
-    assert.equal(peak, 3);
+    assert.equal(peak, 1);
     assert.equal(active, 0);
     assert.equal(calls.length, count);
     assert.equal(data.clips.length, count);
@@ -63,7 +63,7 @@ for (const count of [39, 40, 41, 60, 100]) {
   });
 }
 
-test("POST failure identifies both rejected TTS and failed body reads without partial success", async () => {
+test("collection identifies both rejected TTS and failed body reads without partial success", async () => {
   const calls = [];
   const post = routeWith(async (body) => {
     calls.push(body.input);

@@ -93,7 +93,7 @@ function routes(){
     this.audio={speech:{create:async body=>{speech.push(body);return {arrayBuffer:async()=>Buffer.from(body.input)};}}};
   }}
   const loader=createLoader({openai:OpenAI});
-  return {speech,analyses,get generationCalls(){return generationCalls;},generate:loader("app/api/generate-article/route.ts").POST,read:loader("app/api/read-passage/route.ts").POST};
+  return {speech,analyses,get generationCalls(){return generationCalls;},generate:loader("app/api/generate-article/route.ts").POST,read:require('./complete-reading.cjs')(loader)};
 }
 const request=body=>new Request("http://localhost/api",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
 
@@ -108,6 +108,8 @@ for(const origin of ["imported","generated"]) test(`exact Le Dernier Train: ${or
     const originalItems=parseTheatreItems(fixture.text);assert.equal(originalItems.length,47);
     let expectedCast;
     for(const speed of ["very-slow","slow","normal","fast"]){
+      // Fresh worker per speed avoids an artificial burst of 408 mock calls.
+      const r=routes();
       const env=webEnvironment();let result;
       const s=new ReadingPlaybackSession(env,async(_url,options)=>{const response=await r.read(new Request("http://localhost/api",options));assert.equal(response.status,200);result=await response.clone().json();return response;});
       await s.start(doc.text,speed,doc);await settle();

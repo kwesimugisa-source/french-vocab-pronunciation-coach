@@ -29,12 +29,9 @@ export class TheatreGenerationError extends Error {
   }
 }
 
-export async function generateTheatreResponse(
-  text: string,
-  playbackSpeed: number,
-  synthesize: (input: SpeechInput) => Promise<string>,
-  options: { performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number } = {}
-): Promise<TheatreResponse> {
+export type TheatreGenerationOptions = { performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number };
+
+export async function prepareTheatrePlan(text: string, options: TheatreGenerationOptions = {}) {
   const performanceStyle = theatreStyle(options.performanceStyle);
   const items = parseTheatreItems(text);
   const metadata = options.theatreCharacters === undefined ? [] : validateTheatreCharacters(options.theatreCharacters, text);
@@ -56,6 +53,18 @@ export async function generateTheatreResponse(
     reason: performanceStyle === "clarte" || analysis?.director ? null : !analysis ? "analysis_unavailable" : !withinDirectorBudget(items) ? "plan_budget" : "invalid_or_missing_plan",
     directedItemCount: performanceStyle === "naturel" ? analysis?.director?.lines.length ?? 0 : 0,
   };
+  return { items, casting, analysis, direction, performanceStyle,
+    analysisCacheKey: analysis ? theatreAnalysisCache.put(text, analysis, cacheScope) : undefined,
+    ambience: ambienceDecision ?? analysis?.ambience ?? noAmbience() };
+}
+export type TheatrePlan = Awaited<ReturnType<typeof prepareTheatrePlan>>;
+
+export async function generateTheatreResponse(
+  text: string, playbackSpeed: number, synthesize: (input: SpeechInput) => Promise<string>,
+  options: TheatreGenerationOptions = {}
+): Promise<TheatreResponse> {
+  const plan = await prepareTheatrePlan(text, options);
+  const { items, casting, analysis, direction, performanceStyle } = plan;
   // Casting and complete validated direction are fixed before concurrent TTS.
   const jobs = items.flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
     [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
@@ -106,9 +115,9 @@ export async function generateTheatreResponse(
     mode: "theatre",
     performanceStyle,
     direction,
-    ...(analysis ? { analysisCacheKey: theatreAnalysisCache.put(text, analysis, cacheScope) } : {}),
+    ...(plan.analysisCacheKey ? { analysisCacheKey: plan.analysisCacheKey } : {}),
     casting,
-    ambience: ambienceDecision ?? analysis?.ambience ?? noAmbience(),
+    ambience: plan.ambience,
     integrity: {
       version: 1,
       parsedItemCount: items.length,

@@ -16,7 +16,7 @@ function routes(output = { title: "Texte", text: "Bonjour à tous." }) {
     }
   }
   const load = createLoader({ openai: MockOpenAI });
-  return { calls, speech, generate: load("app/api/generate-article/route.ts").POST, read: load("app/api/read-passage/route.ts").POST };
+  return { calls, speech, generate: load("app/api/generate-article/route.ts").POST, read: require('./complete-reading.cjs')(load) };
 }
 const request = body => new Request("http://localhost/api", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 for (const type of CONTENT_TYPES) test(`nine-mode route identity: ${type}`, async () => {

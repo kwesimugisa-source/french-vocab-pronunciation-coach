@@ -119,7 +119,7 @@ function route(fail = false) {
   class MockOpenAI { constructor() { this.audio = { speech: { create: async body => {
     calls.push(body); if (fail) throw Error("PRIVATE PROVIDER DETAIL"); return { arrayBuffer: async () => Buffer.from(body.input) };
   } } }; this.responses = { create: () => assert.fail("no theatre analysis") }; } }
-  const post = createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST;
+  const post = require('./complete-reading.cjs')(createLoader({ openai: MockOpenAI }));
   return { calls, post: body => post(new Request("http://localhost/api", { method: "POST", body: JSON.stringify(body) })) };
 }
 process.env.OPENAI_API_KEY = "test-only-placeholder";

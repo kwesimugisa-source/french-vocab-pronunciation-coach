@@ -177,7 +177,7 @@ test("full API Conversation flow: generated/imported, all speeds, no analysis or
       this.audio = { speech: { create: async body => { speech.push(body); return { arrayBuffer: async () => Buffer.from(body.input) }; } } };
     }
   }
-  const routeLoad = createLoader({ openai: MockOpenAI }), read = routeLoad("app/api/read-passage/route.ts").POST;
+  const routeLoad = createLoader({ openai: MockOpenAI }), read = require('./complete-reading.cjs')(routeLoad);
   const generate = routeLoad("app/api/generate-article/route.ts").POST;
   const req = body => new Request("http://localhost/api", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
   const generatedResponse = await generate(req({contentType:"conversation", level:"B1"})); assert.equal(generatedResponse.status, 200);

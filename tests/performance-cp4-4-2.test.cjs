@@ -11,7 +11,7 @@ const interjections="[Une petite salle. Deux personnes attendent.]\nMARC : Euh..
 function route(plan=analysisFor){
  const calls=[],analyses=[];
  class OpenAI{constructor(){this.responses={create:async body=>{analyses.push(body);const items=JSON.parse(body.input[1].content).items;return {status:"completed",output_text:JSON.stringify(plan(items))};}};this.audio={speech:{create:async body=>{calls.push(body);return {arrayBuffer:async()=>Buffer.from(body.input)};}}};}}
- return {calls,analyses,post:createLoader({openai:OpenAI})("app/api/read-passage/route.ts").POST};
+ return {calls,analyses,post:require('./complete-reading.cjs')(createLoader({openai:OpenAI}))};
 }
 async function withKey(fn){const before=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY="test-placeholder";try{await fn();}finally{if(before===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=before;}}
 test("audit: Clara short and long lines retain the same identity at the actual provider boundary",()=>withKey(async()=>{

@@ -139,7 +139,7 @@ test("real read route never analyzes/casts known exercise text even with theatri
     this.responses = { create: async () => assert.fail("no dramatic analysis") };
     this.audio = { speech: { create: async body => { calls.push(body); return { arrayBuffer: async () => Buffer.from("audio") }; } } };
   } }
-  const post = createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST;
+  const post = require('./complete-reading.cjs')(createLoader({ openai: MockOpenAI }));
   for (const [speed, rate] of [["very-slow", .7], ["slow", .85], ["normal", 1], ["fast", 1.15]]) {
     const response = await post(new Request("http://localhost/api", { method: "POST", body: JSON.stringify({ text: "(Un exemple.)\nNORA: Rrr.\nCHŒUR: Rrr.", contentType: "tongue-twisters", documentId: "doc", revision: 1, speed }) }));
     assert.equal(response.status, 200); assert.equal(response.headers.get("x-reading-mode"), "standard"); assert.equal(calls.at(-1).speed, rate); assert.equal(calls.at(-1).instructions, load("lib/document-language.ts").pronunciationInstructions("fr"));
@@ -169,7 +169,7 @@ test("every sentence in the actual sample independently uses ordinary audio, nev
     this.responses = { create: async () => assert.fail("no theatre analysis for the actual sample") };
     this.audio = { speech: { create: async body => { inputs.push(body.input); assert.equal(body.voice, "alloy"); assert.equal(body.instructions, load("lib/document-language.ts").pronunciationInstructions("fr")); return { arrayBuffer: async () => Buffer.from("audio") }; } } };
   } }
-  const post = createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST;
+  const post = require('./complete-reading.cjs')(createLoader({ openai: MockOpenAI }));
   for (const e of doc.tongueTwisters.exercises) {
     const response = await post(new Request("http://localhost/api", { method: "POST", body: JSON.stringify({ text: e.text, contentType: doc.contentType, documentId: doc.documentId, revision: doc.revision }) }));
     assert.equal(response.status, 200); assert.equal(response.headers.get("content-type"), "audio/mpeg");

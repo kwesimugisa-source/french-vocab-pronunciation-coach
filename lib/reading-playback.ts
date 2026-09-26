@@ -1,3 +1,4 @@
+import { IncrementalTheatreLoader, assertTheatreManifest } from "./theatre-incremental";
 import { theatreStyle, TheatreStyle } from "./theatre-performance";
 import { documentLanguage } from "./document-language";
 import { ContentIdentity, validateIdentity } from "./content-document";
@@ -34,6 +35,7 @@ export class ReadingPlaybackSession {
   readonly preparation = new Preparation();
   private analysisCache: { key: string; reference?: string; ambience?: AmbienceRecommendation; retryAt: number } | null = null;
   private lifecycle: { context: Partial<BetaData>; status: string; since: number } | null = null;
+  private incremental: IncrementalTheatreLoader | null = null;
   private request: AbortController | null = null;
   private conversationRequest = false;
   private ordinary: PlaybackAudio | null = null;
@@ -69,10 +71,10 @@ export class ReadingPlaybackSession {
   };
   private update(patch: Partial<ReadingSnapshot>) {
     const theatre = this.theatre.getSnapshot();
-    this.ambience.setActive(["playing", "paused", "replaying", "practising"].includes(theatre.status));
+    this.ambience.setActive(["playing", "paused", "replaying", "practising", "buffering"].includes(theatre.status));
     this.snapshot = { ...this.snapshot, ...patch, theatre, preparation:this.preparation.getSnapshot(), conversationPreparing:this.conversation.getSnapshot().preparing,
       busy: !!this.request || !!this.ordinary || this.conversation.getSnapshot().busy || !!theatre.practiceTarget ||
-        ["playing", "paused", "replaying", "practising"].includes(theatre.status) };
+        ["playing", "paused", "replaying", "practising", "buffering"].includes(theatre.status) };
     if (this.lifecycle && this.snapshot.mode === "theatre") {
       const status = theatre.status === "completed" ? "completed" : theatre.status === "error" ? "failed" : theatre.status === "paused" ? "paused" : ["playing","replaying","practising"].includes(theatre.status) ? (this.lifecycle.status === "paused" ? "resumed" : "started") : null;
       if (status) this.playbackEvent(status, theatre.queue.length);
@@ -105,6 +107,7 @@ export class ReadingPlaybackSession {
     this.ordinaryUrl = null;
   }
   stop() {
+    this.incremental?.dispose(); this.incremental=null;
     this.playbackEvent("cancelled"); this.preparation.cancel();
     const request = this.request;
     this.request = null;
@@ -205,7 +208,11 @@ export class ReadingPlaybackSession {
           const scene = data as TheatreResponse;
           if (theatreStyle(scene.performanceStyle) !== performanceStyle)
             throw new Error("Le style audio reçu ne correspond pas au style demandé.");
-          this.theatre.acceptScene(sessionId!, data, text);
+          if ((data as {protocol?:unknown})?.protocol === "incremental-v1") {
+            assertTheatreManifest(data,text);
+            this.incremental=new IncrementalTheatreLoader(data,this.fetchAudio,betaHeaders);
+            this.theatre.acceptIncremental(sessionId!,data,text,this.incremental.load);
+          } else this.theatre.acceptScene(sessionId!, data, text);
           // Only CP4's sanitized legacy shape omitted confidence. New scene
           // reasoning must carry its own validated confidence, never invent it.
           const ambience = scene.ambience;

@@ -25,7 +25,7 @@ function route() {
       }}};
     }
   }
-  const post = createLoader({ openai: OpenAI })("app/api/read-passage/route.ts").POST;
+  const post = require('./complete-reading.cjs')(createLoader({ openai: OpenAI }));
   return { calls, analyses, requests, post: body => post(new Request("http://localhost/api/read-passage", { method: "POST", body: JSON.stringify(body) })),
     fetch: (_url, options) => { requests.push(JSON.parse(options.body)); return post(new Request("http://localhost/api/read-passage", options)); } };
 }

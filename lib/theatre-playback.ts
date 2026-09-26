@@ -1,3 +1,4 @@
+import { assertTheatreManifest, ClipPreparationError } from "./theatre-incremental";
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip } from "./theatre";
 import { ChorusAudio } from "./chorus-audio";
@@ -5,7 +6,7 @@ import { SynchronizedChorus } from "./synchronized-chorus";
 import type { ChorusContext, ChorusBufferCache } from "./synchronized-chorus";
 import { isChorusSpeaker } from "./theatre-speakers";
 
-export type PlaybackState = "idle" | "loading" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
+export type PlaybackState = "idle" | "loading" | "buffering" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
 export type PracticeTarget = {
   sessionId: number;
   itemId: string;
@@ -88,6 +89,8 @@ export class TheatrePlaybackController {
   private pausedMode: "playing" | "replaying" = "playing";
   private bookmark: { index: number; position: number | GroupPosition; status: PlaybackState } | null = null;
   private captureBlocked = false;
+  private loadClip: ((index: number) => Promise<TheatreClip>) | null = null;
+  private pendingMode: "playing" | "replaying" | "practising" = "playing";
   private chorusCache: ChorusBufferCache = new Map();
 
   constructor(private environment: PlaybackEnvironment = browserPlaybackEnvironment) {}
@@ -123,6 +126,7 @@ export class TheatrePlaybackController {
   }
 
   stop() {
+    this.loadClip = null;
     this.releaseAudio();
     this.chorusCache.clear();
     this.bookmark = null;
@@ -146,6 +150,31 @@ export class TheatrePlaybackController {
     if (!data.clips.length) this.update({ status: "completed" });
     else this.playItem(0, "playing");
     return true;
+  }
+
+  acceptIncremental(sessionId: number, data: unknown, source: string, loadClip: (index: number) => Promise<TheatreClip>) {
+    if (sessionId !== this.snapshot.sessionId || this.snapshot.status !== "loading") return false;
+    assertTheatreManifest(data, source);
+    this.loadClip = loadClip;
+    this.update({queue:data.clips,currentIndex:data.clips.length?0:-1});
+    if(data.clips.length) this.playItem(0,"playing");
+    else this.update({status:"completed"});
+    return true;
+  }
+  private storeClip(index: number, clip: TheatreClip) {
+    const expected=this.snapshot.queue[index];
+    assertCompleteTheatreResponse({mode:"theatre",integrity:{version:1,parsedItemCount:1,expectedItemIds:[expected.id],generatedClipCount:1},clips:[clip]},[expected]);
+    this.update({queue:this.snapshot.queue.map((c,i)=>i===index?clip:c)});
+  }
+  private prefetch(index: number) {
+    const loader=this.loadClip, session=this.snapshot.sessionId;
+    if(!loader) return;
+    for(let i=index+1;i<=Math.min(index+2,this.snapshot.queue.length-1);i++) {
+      if(this.snapshot.queue[i].audioBase64) continue;
+      void loader(i).then(clip=>{
+        if(session===this.snapshot.sessionId && loader===this.loadClip) this.storeClip(i,clip);
+      }).catch(()=>{}); // Required playback retries the missing item, never skips it.
+    }
   }
 
   private fail(item: TheatreClip, message: string) {
@@ -197,7 +226,21 @@ export class TheatrePlaybackController {
     this.releaseAudio();
     const item = this.snapshot.queue[index];
     const attempt = this.attempt;
-    this.update({ status: startPaused ? "paused" : mode, error: null, modelPlaying: mode === "practising", modelPaused: false,
+    if(!item.audioBase64 && this.loadClip) {
+      this.pendingMode=mode;
+      this.pausedMode=mode==="replaying"?"replaying":"playing";
+      this.update({status:mode==="practising"?"practising":startPaused?"paused":"buffering",error:null,
+        modelPlaying:mode==="practising"&&!startPaused,modelPaused:mode==="practising"&&startPaused,automaticAdvancement:!startPaused && mode!=="practising",
+        ...(mode!=="practising"?{currentIndex:index,currentItemId:item.id}:{})});
+      void this.loadClip(index).then(clip=>{
+        if(attempt!==this.attempt) return;
+        const paused=this.snapshot.status==="paused" || this.snapshot.modelPaused;
+        this.storeClip(index,clip);
+        this.playItem(index,mode,position,paused);
+      }).catch(error=>{if(attempt===this.attempt) this.fail(item,error instanceof ClipPreparationError ? error.message : "Préparation interrompue. Réessayez cet élément; les passages prêts sont conservés.");});
+      return;
+    }
+    this.update({ status: mode === "practising" ? "practising" : startPaused ? "paused" : mode, error: null, modelPlaying: mode === "practising" && !startPaused, modelPaused: mode === "practising" && startPaused,
       automaticAdvancement: !startPaused && mode !== "practising",
       ...(mode !== "practising" ? { currentIndex: index, currentItemId: item.id } : {}) });
     try {
@@ -232,11 +275,18 @@ export class TheatrePlaybackController {
       };
       if (startPaused) this.pausedMode = mode === "replaying" ? "replaying" : "playing";
       else this.invokePlay(item);
+      if(mode!=="practising") this.prefetch(index);
     } catch {
       this.fail(item, "Audio invalide pour cet élément.");
     }
   }
   pause() {
+    if(!this.audio && this.snapshot.status==="buffering") {
+      this.update({status:"paused",automaticAdvancement:false});return;
+    }
+    if(!this.audio && this.snapshot.practiceTarget && this.snapshot.modelPlaying) {
+      this.update({modelPlaying:false,modelPaused:true});return;
+    }
     if (this.snapshot.practiceTarget) {
       if (!this.audio || !this.snapshot.modelPlaying) return;
       this.playCall++;
@@ -254,11 +304,17 @@ export class TheatrePlaybackController {
   }
   resume() {
     if (this.captureBlocked) return;
+    if(this.snapshot.practiceTarget && this.snapshot.modelPaused && !this.audio) {
+      this.playItem(this.snapshot.practiceTarget.index,"practising");return;
+    }
     if (this.snapshot.practiceTarget && this.snapshot.modelPaused && this.audio) {
       this.update({ modelPlaying: true, modelPaused: false });
       if (this.audio.ended) this.audio.onended?.(new Event("ended"));
       else this.invokePlay(this.snapshot.queue[this.snapshot.practiceTarget.index]);
       return;
+    }
+    if(this.snapshot.status==="paused" && !this.audio) {
+      this.playItem(this.snapshot.currentIndex,this.pendingMode);return;
     }
     if (this.snapshot.status !== "paused" || !this.audio) return;
     this.update({ status: this.pausedMode, automaticAdvancement: true });

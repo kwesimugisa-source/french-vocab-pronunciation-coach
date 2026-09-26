@@ -25,7 +25,7 @@ function routeWith(analysisReply) {
       } } };
     }
   }
-  return { post: createLoader({ openai: MockOpenAI })("app/api/read-passage/route.ts").POST, analysisCalls, speechCalls };
+  return { post: require('./complete-reading.cjs')(createLoader({ openai: MockOpenAI })), analysisCalls, speechCalls };
 }
 const request = (text, speed = "normal", contentType = "theatre") => new Request("http://localhost/api/read-passage", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, speed, contentType }),

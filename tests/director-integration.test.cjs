@@ -6,7 +6,7 @@ process.env.OPENAI_API_KEY='test-placeholder';
 function route(transform=(p)=>p){
  const calls=[],analyses=[];
  class OpenAI{constructor(){this.responses={create:async body=>{analyses.push(body);const input=JSON.parse(body.input[1].content);return {status:'completed',output_text:JSON.stringify({...analysisFor(input.items),ambience:{environment:'none',confidence:'uncertain',basis:'contextual',evidence:[],rationale:'No supported catalogue bed',contradictory:false},...(input.directorRequested?{director:transform(tablePlan(input.items))}:{})})};}};this.audio={speech:{create:async body=>{calls.push(body);return {arrayBuffer:async()=>Buffer.from(body.input)};}}};}}
- const load=createLoader({openai:OpenAI}),post=load('app/api/read-passage/route.ts').POST;
+ const load=createLoader({openai:OpenAI}),post=require('./complete-reading.cjs')(load);
  return {load,calls,analyses,post:body=>post(new Request('http://localhost/api/read-passage',{method:'POST',body:JSON.stringify(body)})),fetch:(_url,options)=>post(new Request('http://localhost/api/read-passage',options))};
 }
 for(const speed of ['very-slow','slow','normal','fast'])test(`real API ${speed}: French anchoring surrounds Director; exact input and fixed voice`,async()=>{

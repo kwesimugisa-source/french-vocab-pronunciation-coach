@@ -16,6 +16,7 @@ export default function PracticeControls({ active, units, selected, disabled, au
     {active && <div className="mt-3 space-y-3">
       <p className="text-sm text-slate-600">Choisissez une unité dans le texte, écoutez-la, puis enregistrez votre essai. La vitesse choisie s’applique à chaque écoute.</p>
       <p aria-live="polite" className="break-words text-sm font-medium">{selected ? `Unité ${selected.index + 1} sur ${units.length}${selected.speaker ? " · " + selected.speaker : ""}` : "Aucune unité disponible."}</p>
+      {selected && <p aria-label="Texte de l’unité sélectionnée" aria-live="polite" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-lg leading-8 text-slate-900 whitespace-pre-wrap break-words">{selected.text}</p>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} disabled={disabled || !selected || selected.index === 0} onClick={() => selected && onSelect(units[selected.index - 1].id)}>Précédente</button>
         <button type="button" className={button} disabled={disabled || !selected || selected.index === units.length - 1} onClick={() => selected && onSelect(units[selected.index + 1].id)}>Suivante</button>

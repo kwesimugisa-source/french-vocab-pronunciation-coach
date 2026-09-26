@@ -17,6 +17,7 @@ type Props = {
   onFinishPractice: () => void;
 };
 const labels = {
+  buffering: "Préparation du prochain passage…",
   idle: "Prêt", loading: "Préparation de la scène…", playing: "Lecture en cours",
   paused: "En pause", replaying: "Réécoute en cours", practising: "Pratique d’une réplique",
   completed: "Scène terminée", error: "Lecture interrompue",
@@ -43,23 +44,23 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
         {labels[playback.status]}{current ? ` — élément ${playback.currentIndex + 1} sur ${playback.queue.length}` : ""}
       </p>
       {!!playback.queue.length && <p className="text-xs text-slate-600">{playback.completions.length} / {playback.queue.length} éléments terminés</p>}
-      {current && !practice && <p className="mt-3 max-w-[68ch] rounded-xl bg-slate-50 p-3 leading-7 whitespace-pre-line"><strong>{current.speaker} : </strong>{current.text}</p>}
+      {current && !practice && <p className="mt-3 max-w-[68ch] rounded-xl bg-slate-50 p-3 leading-7 whitespace-pre-wrap break-words"><strong>{current.speaker} : </strong>{current.text}</p>}
       {playback.error && <p role="alert" className="mt-3 text-sm text-red-700">
         {playback.error.message} {playback.error.itemId && `Élément ${playback.error.index + 1} (${playback.error.itemId}).`}
       </p>}
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" className={button} onClick={onPause}
-          disabled={!(["playing", "replaying"].includes(playback.status) || playback.modelPlaying)}>Pause</button>
+          disabled={!(["playing", "replaying", "buffering"].includes(playback.status) || playback.modelPlaying)}>Pause</button>
         <button type="button" className={button} onClick={onResume}
           disabled={recordingBusy || (playback.status !== "paused" && !playback.modelPaused)}>Reprendre</button>
         <button type="button" className={button} onClick={onReplay}
-          disabled={recordingBusy || !current}>Réécouter depuis le début</button>
+          disabled={recordingBusy || !current}>{playback.status === "error" ? "Réessayer cet élément" : "Réécouter depuis le début"}</button>
         <button type="button" className={button} onClick={onStop}>Arrêter la scène</button>
       </div>
       {practice && (
         <div className="mt-4 rounded-2xl bg-amber-50 p-4">
           <h3 className="font-semibold">Réplique de {practice.speaker}</h3>
-          <p className="mt-2 whitespace-pre-line">{practice.text}</p>
+          <p className="mt-2 whitespace-pre-wrap break-words">{practice.text}</p>
           <p className="mt-2 text-sm text-slate-600">
             Réécoutez le modèle, puis utilisez les commandes d’enregistrement et d’analyse ci-dessous.
             Vous pouvez recommencer autant de fois que nécessaire.

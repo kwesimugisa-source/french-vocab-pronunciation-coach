@@ -1,8 +1,9 @@
+import { sealScene, sceneManifest } from "../../../lib/theatre-scene-ticket";
 import { theatreStyle } from "../../../lib/theatre-performance";
 import OpenAI from "openai";
 import { documentLanguage, DocumentLanguage, pronunciationInstructions } from "../../../lib/document-language";
 import { protectedRoute, providerCall } from "../../../lib/beta-server";
-import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
+import { prepareTheatrePlan, TheatreGenerationError } from "../../../lib/theatre-generation";
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
 import { generateConversation, CONVERSATION_INSTRUCTIONS } from "../../../lib/conversation-generation";
@@ -116,12 +117,12 @@ async function handlePost(req: Request) {
       let performanceStyle;
       try { performanceStyle = theatreStyle(body.performanceStyle); }
       catch { return new Response("Style théâtral invalide.", {status:400}); }
-      const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
-        speechToBase64({ client, language, ...input }),
+      const plan = await prepareTheatrePlan(text,
         { performanceStyle, theatreCharacters, directorEnabled: true, documentId: body.documentId, revision: body.revision,
-          analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens, true), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
+          analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, AbortSignal.any([signal, req.signal]), maxOutputTokens, true), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
-      return Response.json(scene);
+      req.signal.throwIfAborted();
+      return Response.json(sceneManifest(plan, playbackSpeed, sealScene(plan, playbackSpeed, apiKey)), {headers:{"Cache-Control":"no-store"}});
     }
     if (text.length > TTS_INPUT_LIMIT) return new Response(
       `La lecture audio hors théâtre accepte au maximum ${TTS_INPUT_LIMIT} caractères. Importez un passage plus court pour l’écouter. Le texte affiché est conservé.`, { status: 413 });

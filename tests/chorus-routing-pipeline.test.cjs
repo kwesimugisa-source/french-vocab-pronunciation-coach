@@ -48,7 +48,7 @@ for (const [blockIndex, block] of blocks.entries()) for (const [name, label, new
       }
     }
     const load = createLoader({ openai: MockOpenAI });
-    const { POST } = load("app/api/read-passage/route.ts");
+    const POST = require("./complete-reading.cjs")(load);
     const { ReadingPlaybackSession } = load("lib/reading-playback.ts");
     const source = ["L’AGENT :", "Bonjour, voici le dossier.", "", label, "", ...block,
       "", "L’AGENT :", "Merci, suivant."].join(newline);
