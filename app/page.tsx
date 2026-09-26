@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ReadingPlaybackSession } from "@/lib/reading-playback";
+import { PracticeSession } from "@/lib/practice-session";
+import { supportsUniversalPractice } from "@/lib/practice-units";
+import PracticeControls from "@/components/article-reader/PracticeControls";
 import { ExercisePracticeSession } from "@/lib/exercise-practice";
 import { soundTarget } from "@/lib/tongue-twisters";
 import TongueTwisterPractice from "@/components/article-reader/TongueTwisterPractice";
@@ -54,6 +57,8 @@ export default function Page() {
 
   const [playback] = useState(() => new ReadingPlaybackSession());
   const [pronunciation] = useState(() => new PronunciationSession(undefined, playback.beginMicrophoneCapture));
+  const [universal] = useState(() => new PracticeSession(playback, pronunciation));
+  const universalState = useSyncExternalStore(universal.subscribe, universal.getSnapshot, universal.getSnapshot);
   const [practice] = useState(() => new ExercisePracticeSession(playback, pronunciation));
   const practiceState = useSyncExternalStore(practice.subscribe, practice.getSnapshot, practice.getSnapshot);
   const playbackState = useSyncExternalStore(playback.subscribe, playback.getSnapshot, playback.getSnapshot);
@@ -148,7 +153,7 @@ export default function Page() {
     playback.stop();
     pronunciation.reset();
     vocabulary.cancel();
-    practice.clear();
+    practice.clear(); universal.clear();
     playback.invalidateDocument?.();
     setArticle(document);
     betaJournal.emit({...betaContext(document),name:"document_imported"});
@@ -177,7 +182,7 @@ export default function Page() {
       const document = importDocument(article.originalText, article.documentId, type, article.revision + 1);
       articleRequest.current?.abort(); articleRequest.current = null; generationPreparation.cancel();
       playback.stop(); pronunciation.reset(); vocabulary.cancel();
-      setSelectedWord(null); setSelectedWordKey(null); practice.clear(); setArticle(document);
+      setSelectedWord(null); setSelectedWordKey(null); practice.clear(); universal.clear(); setArticle(document);
       playback.invalidateDocument?.();
       betaJournal.emit({...betaContext(document),name:"document_reinterpreted"});
     } catch { alert("Impossible de réinterpréter ce texte."); }
@@ -225,6 +230,7 @@ export default function Page() {
 
   function handleStartReading() {
     if (pronunciation.isBusy()) return;
+    if (universalState.active) { void universal.record(); return; }
     if (article.contentType === "tongue-twisters") { void practice.record(); return; }
     let referenceText = article.text;
     try { if (article.contentType === "conversation") referenceText = conversationReference(article.text); }
@@ -284,7 +290,7 @@ export default function Page() {
         throw new Error("Identité du texte généré invalide.");
       if (target && JSON.stringify(data.tongueTwisters?.target) !== JSON.stringify(target)) throw new Error("Son généré incompatible.");
       vocabulary.cancel();
-      practice.clear();
+      practice.clear(); universal.clear();
       playback.invalidateDocument?.();
       setArticle(data);
       generationPreparation.finish(operationId,"completed");
@@ -308,6 +314,25 @@ export default function Page() {
     }
   }
 
+  const recordingControls = (article.contentType !== "tongue-twisters" && <ReadingControls
+        isRecording={isRecording}
+        hasRecording={!!pronunciationState.recording}
+        isBusy={recordingBusy || (universalState.active && (isGenerating || !universalState.selected))}
+        retryLabel={universalState.active}
+        isAnalyzing={pronunciationState.status === "analyzing"}
+        targetLabel={universalState.active && universalState.selected ? `Pratique — unité ${universalState.selected.index + 1}` : playbackState.theatre.practiceTarget
+          ? `Pratique — ${playbackState.theatre.practiceTarget.speaker}, réplique ${playbackState.theatre.practiceTarget.index + 1}`
+          : undefined}
+        statusMessage={pronunciationState.status === "requesting-microphone" ? "Autorisation du microphone en attente…"
+          : pronunciationState.status === "stopping" ? "Finalisation de l’enregistrement…"
+          : pronunciationState.status === "analyzing" ? "Analyse de votre enregistrement…"
+          : pronunciationState.status === "analyzed" ? "Analyse terminée. Vous pouvez enregistrer un nouvel essai."
+          : undefined}
+        error={pronunciationState.error}
+        onStartReading={handleStartReading}
+        onStopReading={handleStopReading}
+        onAnalyzePronunciation={handleAnalyzePronunciation}
+      />);
   return (
     <AppShell>
       <BetaDiagnostics />
@@ -342,7 +367,7 @@ export default function Page() {
         }}
         targetSoundId={targetSoundId} customSound={customSound}
         onTargetSoundChange={setTargetSoundId} onCustomSoundChange={setCustomSound}
-        hideAudio={article.contentType === "tongue-twisters"}
+        hideAudio={article.contentType === "tongue-twisters" || universalState.active}
         contentType={contentType}
         level={level}
         isPlayingAudio={playbackState.busy}
@@ -418,15 +443,26 @@ export default function Page() {
     </div>
   )}
 </div>
+      {supportsUniversalPractice(article.contentType) && <PracticeControls
+        active={universalState.active} units={universalState.units} selected={universalState.selected}
+        disabled={isGenerating} audioBusy={playbackState.busy} recordingBusy={recordingBusy}
+        onMode={active => { if (active === universalState.active) return; if (active) universal.enter(article); else universal.clear(); }}
+        onSelect={id => universal.select(id)} onListen={() => { void universal.listen(readingSpeed); }} onStop={handleStopPlayback}
+      />}
+      {universalState.error && <p role="alert">{universalState.error}</p>}
+      {universalState.active && recordingControls}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div className="min-w-0">
           <ArticleTextPanel
             article={article}
+            practiceUnits={universalState.active ? universalState.units : undefined}
+            selectedUnitId={universalState.selected?.id}
+            onSelectUnit={id => { if (!isGenerating) universal.select(id); }}
             activeItemId={playbackState.mode === "theatre" && ["playing", "replaying", "paused"].includes(playbackState.theatre.status) ? playbackState.theatre.queue[playbackState.theatre.currentIndex]?.id : undefined}
             practiceItemId={playbackState.mode === "theatre" ? playbackState.theatre.practiceTarget?.itemId : undefined}
             selectedWord={selectedWordKey}
             onWordClick={handleAnalyzeWord}
-            weakWords={pronunciationWeakPoints.map((item) => item.word)}
+            weakWords={pronunciationState.feedback ? pronunciationWeakPoints.map((item) => item.word) : []}
           />
         </div>
 
@@ -436,26 +472,9 @@ export default function Page() {
         </div>
       </div>
 
-      {article.contentType !== "tongue-twisters" && <ReadingControls
-        isRecording={isRecording}
-        hasRecording={!!pronunciationState.recording}
-        isBusy={recordingBusy}
-        isAnalyzing={pronunciationState.status === "analyzing"}
-        targetLabel={playbackState.theatre.practiceTarget
-          ? `Pratique — ${playbackState.theatre.practiceTarget.speaker}, réplique ${playbackState.theatre.practiceTarget.index + 1}`
-          : undefined}
-        statusMessage={pronunciationState.status === "requesting-microphone" ? "Autorisation du microphone en attente…"
-          : pronunciationState.status === "stopping" ? "Finalisation de l’enregistrement…"
-          : pronunciationState.status === "analyzing" ? "Analyse de votre enregistrement…"
-          : pronunciationState.status === "analyzed" ? "Analyse terminée. Vous pouvez enregistrer un nouvel essai."
-          : undefined}
-        error={pronunciationState.error}
-        onStartReading={handleStartReading}
-        onStopReading={handleStopReading}
-        onAnalyzePronunciation={handleAnalyzePronunciation}
-      />}
+      {!universalState.active && recordingControls}
 
-      {article.contentType !== "tongue-twisters" && <div className="mt-6 space-y-6">
+      {article.contentType !== "tongue-twisters" && (!universalState.active || pronunciationState.feedback) && <div className="mt-6 space-y-6">
         {pronunciationScore && <div className="rounded-xl border bg-white p-4">
           <p>Correspondance estimée entre transcription et texte : {pronunciationScore.overall}/100</p>
           <p className="text-sm text-slate-600">La reconnaissance vocale peut se tromper. Ce résultat ne mesure ni les sons, ni la fluidité, ni l’intonation.</p>

@@ -1,3 +1,4 @@
+import type { PracticeUnit } from "@/lib/practice-units";
 import { useMemo } from "react";
 import { parseTheatreItems } from "@/lib/theatre";
 import { isChorusSpeaker } from "@/lib/theatre-speakers";
@@ -5,6 +6,7 @@ import { textBlocks } from "@/lib/vocabulary-session";
 import type { ArticleData } from "@/lib/types";
 
 type Props = {
+  practiceUnits?: PracticeUnit[]; selectedUnitId?: string; onSelectUnit?: (id: string) => void;
   article: ArticleData & { contentType?: string };
   activeItemId?: string;
   practiceItemId?: string;
@@ -21,7 +23,7 @@ function normalizeWord(word: string) {
 }
 
 export default function ArticleTextPanel({
-  article, activeItemId, practiceItemId,
+  article, activeItemId, practiceItemId, practiceUnits, selectedUnitId, onSelectUnit,
   onWordClick,
   selectedWord,
   weakWords = [],
@@ -55,7 +57,15 @@ export default function ArticleTextPanel({
       <p className="mt-2 text-sm text-slate-600">Cliquez sur un mot pour explorer son sens. Vous pouvez aussi le sélectionner au clavier.</p>
     </div>
     <div className="mx-auto max-w-[68ch] break-words text-base leading-8 text-slate-700">
-      {article.contentType === "theatre" ? <div className="space-y-3">{rows.map(({text,offset,item},index)=>{
+      {practiceUnits ? <div className="whitespace-pre-wrap">{practiceUnits.map((unit, index) => <span key={unit.id}>
+        {renderWords(article.text.slice(index ? practiceUnits[index - 1].end : 0, unit.start), index ? practiceUnits[index - 1].end : 0)}
+        <span className={unit.id === selectedUnitId ? "rounded bg-amber-50 ring-2 ring-amber-500" : ""} data-practice-unit={unit.id}>
+          <button type="button" aria-label={`Pratiquer l’unité ${index + 1}`} aria-pressed={unit.id === selectedUnitId}
+            onClick={() => onSelectUnit?.(unit.id)} className="mr-1 inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border border-slate-300 bg-white text-xs font-semibold">{index + 1}</button>
+          {renderWords(unit.text, unit.start)}
+        </span>
+        {index === practiceUnits.length - 1 && renderWords(article.text.slice(unit.end), unit.end)}
+      </span>)}</div> : article.contentType === "theatre" ? <div className="space-y-3">{rows.map(({text,offset,item},index)=>{
         if (!text.trim()) return null;
         const label = item?.type === "stage" ? undefined : text.match(/^\s*[^:：]{1,40}[:：]\s*/u)?.[0];
         const chorus = item ? isChorusSpeaker(item.speaker) : isChorusSpeaker(text.replace(/[:：]\s*$/u,""));

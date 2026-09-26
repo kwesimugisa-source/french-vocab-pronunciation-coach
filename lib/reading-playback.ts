@@ -155,7 +155,7 @@ export class ReadingPlaybackSession {
     if (restart) await this.start(text, speed, identity);
   }
 
-  async start(text: string, speed: string, identity?: ContentIdentity) {
+  async start(text: string, speed: string, identity?: ContentIdentity, conversationTurnId?: string) {
     if (this.snapshot.busy || this.captures) return;
     this.stop();
     if (identity) {
@@ -172,7 +172,7 @@ export class ReadingPlaybackSession {
     if (this.analysisCache?.key !== key) this.analysisCache=null;
     const cached=identity?.contentType === "theatre" ? this.analysisCache : null;
     this.update({ mode: "pending", error: null });
-    this.conversationRequest = identity?.contentType === "conversation";
+    this.conversationRequest = identity?.contentType === "conversation" && !conversationTurnId;
     const sessionId = this.conversationRequest ? null : this.theatre.beginLoading();
     const current = () => this.request === request && !request.signal.aborted;
     let failureCode: "RATE_LIMITED" | "PROVIDER_FAILED" = "PROVIDER_FAILED";
@@ -181,7 +181,7 @@ export class ReadingPlaybackSession {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
           method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders() },
-          body: JSON.stringify({ text, speed, language, ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
+          body: JSON.stringify({ text, speed, language, ...(conversationTurnId ? { conversationTurnId } : {}), ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.ambience ? {analysisCacheKey:cached.reference,ambienceDecision:cached.ambience} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
         if (!current()) return;
         if (!response.ok) {
@@ -190,7 +190,7 @@ export class ReadingPlaybackSession {
           throw new Error(failureMessage);
         }
         if ((response.headers.get("Content-Type") || "").includes("application/json")) {
-          if (identity?.contentType === "conversation") {
+          if (identity?.contentType === "conversation" && !conversationTurnId) {
             const data: unknown = await response.json();
             if (!current() || this.captures) return;
             this.conversation.accept(data, text, ({ "very-slow": 0.7, slow: 0.85, normal: 1, fast: 1.15 } as Record<string, number>)[speed]);
@@ -221,7 +221,7 @@ export class ReadingPlaybackSession {
           this.update({ mode: "theatre", ambience: { ...this.snapshot.ambience, environment: recommendation.environment, status } });
           this.ambience.configure(status === "detected_available" ? recommendation.environment : "none");
         } else {
-          if (identity?.contentType === "conversation") throw new Error("La réponse audio ne contient pas les tours de parole attendus.");
+          if (identity?.contentType === "conversation" && !conversationTurnId) throw new Error("La réponse audio ne contient pas les tours de parole attendus.");
           if (identity?.contentType === "theatre") throw new Error("La scène théâtrale reçue est incomplète.");
           const blob = await response.blob();
           if (!current()) return;

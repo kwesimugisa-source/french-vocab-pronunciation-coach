@@ -5,8 +5,8 @@ import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { generateTheatreResponse, TheatreGenerationError } from "../../../lib/theatre-generation";
 import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
-import { generateConversation } from "../../../lib/conversation-generation";
-import { conversationTurns } from "../../../lib/conversation";
+import { generateConversation, CONVERSATION_INSTRUCTIONS } from "../../../lib/conversation-generation";
+import { conversationTurns, conversationVoices } from "../../../lib/conversation";
 
 import { readingMode } from "../../../lib/content-routing";
 import { isEffectiveType, MAX_TEXT_LENGTH, TTS_INPUT_LIMIT, validateIdentity } from "../../../lib/content-document";
@@ -75,10 +75,24 @@ async function handlePost(req: Request) {
 
     const playbackSpeed = speedMap[String(speed)] ?? 1.0;
     const mode = readingMode(text, body.contentType);
+    if (body.conversationTurnId !== undefined && (body.contentType !== "conversation" || typeof body.conversationTurnId !== "string")) return new Response("Tour de parole invalide.", { status: 400 });
 
     if (body.contentType === "conversation") {
       try {
         const turns = conversationTurns(text);
+        if (body.conversationTurnId !== undefined) {
+          const turn = turns.find(item => item.id === body.conversationTurnId);
+          if (!turn) return new Response("Tour de parole introuvable.", { status: 400 });
+          if (turn.spokenText.length > TTS_INPUT_LIMIT) return new Response("Tour de parole trop long.", { status: 413 });
+          const voices = conversationVoices(turns);
+          // Resolve against the complete dialogue, never recast a one-turn subset.
+          try {
+            const audio = await speechToBase64({ client, language, text: turn.spokenText,
+              voice: voices.get(turn.speakerId)!, speed: playbackSpeed,
+              instructions: CONVERSATION_INSTRUCTIONS });
+            return new Response(Buffer.from(audio, "base64"), { headers: { "Content-Type": "audio/mpeg", "X-Reading-Mode": "standard" } });
+          } catch { return new Response("Impossible de préparer ce tour de parole. Réessayez.", { status: 500 }); }
+        }
         if (turns.some(turn => turn.spokenText.length > TTS_INPUT_LIMIT))
           return new Response(`Un tour de parole dépasse ${TTS_INPUT_LIMIT} caractères. Raccourcissez ce tour pour l’écouter.`, { status: 413 });
       } catch (error) {

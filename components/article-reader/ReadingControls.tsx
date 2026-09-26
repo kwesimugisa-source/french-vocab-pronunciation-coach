@@ -5,6 +5,7 @@ type Props = {
   isBusy?: boolean;
   isAnalyzing?: boolean;
   targetLabel?: string;
+  retryLabel?: boolean;
   statusMessage?: string;
   error?: string | null;
   onStartReading: () => void;
@@ -17,7 +18,7 @@ export default function ReadingControls({
   hasRecording,
   isBusy = false,
   isAnalyzing = false,
-  targetLabel,
+  targetLabel, retryLabel,
   statusMessage,
   error,
   onStartReading,
@@ -37,7 +38,7 @@ export default function ReadingControls({
           disabled={isRecording || isBusy}
           className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {isRecording ? "Enregistrement..." : "Commencer l’enregistrement"}
+          {isRecording ? "Enregistrement..." : retryLabel && hasRecording ? "Réessayer — enregistrer" : "Commencer l’enregistrement"}
         </button>
 
         <button
