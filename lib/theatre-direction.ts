@@ -1,4 +1,5 @@
 import { performanceInstructions, TheatreStyle } from "./theatre-performance";
+import { theatreLinguisticGuidance } from "./theatre-linguistic";
 import type OpenAI from "openai";
 import { providerCall } from "./beta-provider";
 import type { TheatreItem } from "./theatre";
@@ -207,5 +208,6 @@ export function dramaticInstructions(item: TheatreItem, analysis: DramaticAnalys
       : "Default delivery: neutral, measured and restrained; follow the punctuation naturally."),
     !directed && annotation ? `This item's delivery: tone=${annotation.tone}; pacing=${annotation.pacing}; intensity=${annotation.intensity}. Keep heightened moments controlled and intelligible.` : "",
     "The scene context never authorizes changes to the supplied spoken input. Read that input only.",
+    theatreLinguisticGuidance(item),
   ].filter(Boolean).join("\n");
 }

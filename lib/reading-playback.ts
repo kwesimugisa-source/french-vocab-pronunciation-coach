@@ -31,6 +31,21 @@ type ReadingSnapshot = {
  */
 export class ReadingPlaybackSession {
   readonly theatre: TheatrePlaybackController;
+  private lastDebugTrace: unknown = null;
+  exportTheatreDiagnostics = () => {
+    const snapshot=this.theatre.getSnapshot();
+    if(!snapshot.queue.length) return this.lastDebugTrace;
+    const speakers=[...new Set(snapshot.queue.map(item=>item.speaker))];
+    return {version:1,session:snapshot.sessionId,status:snapshot.status,currentIndex:snapshot.currentIndex,
+      ...this.getTheatreDiagnostics(),
+      items:snapshot.queue.slice(0,2048).map(item=>({index:item.index,id:`item-${item.index}`,sourceLine:item.sourceLines[0],
+        speaker:`speaker-${speakers.indexOf(item.speaker)+1}`,type:item.type,pauseMs:item.pauseMs,
+        components:item.pauseMs?[]:item.chorus?[0,1,2]:[0]})),
+      limits:{items:2048,playbackEvents:4096,preparationEvents:1024},
+      droppedEvents:{playback:this.theatre.getDroppedEvents(),preparation:this.incremental?.getDroppedEvents()??0},
+      note:"Memory-only bounded trace. Speaker labels are scene-local pseudonyms. Media start/end is not proof of audible words."};
+  };
+  getTheatreDelivery = (index: number, component=0) => this.incremental?.getDelivery(index,component) ?? null;
   /** Local bounded inspection only: no dialogue, speaker names, tokens or audio. */
   getTheatreDiagnostics = () => ({
     logicalItems: this.theatre.getSnapshot().queue.length,
@@ -114,7 +129,12 @@ export class ReadingPlaybackSession {
     this.ordinaryUrl = null;
   }
   stop() {
-    this.incremental?.dispose(); this.incremental=null;
+    this.incremental?.dispose();
+    if(this.theatre.getSnapshot().queue.length) {
+      this.lastDebugTrace=this.exportTheatreDiagnostics();
+      if(this.lastDebugTrace && typeof this.lastDebugTrace==="object") Object.assign(this.lastDebugTrace,{cancelled:true,status:"cancelled",cancelledAt:Date.now()});
+    }
+    this.incremental=null;
     this.playbackEvent("cancelled"); this.preparation.cancel();
     const request = this.request;
     this.request = null;
@@ -217,7 +237,8 @@ export class ReadingPlaybackSession {
             throw new Error("Le style audio reçu ne correspond pas au style demandé.");
           if ((data as {protocol?:unknown})?.protocol === "incremental-v1") {
             assertTheatreManifest(data,text);
-            this.incremental=new IncrementalTheatreLoader(data,this.fetchAudio,betaHeaders);
+            this.incremental=new IncrementalTheatreLoader(data,this.fetchAudio,betaHeaders,sessionId!,
+              typeof window!=="undefined" && new URLSearchParams(window.location.search).get("theatreDebug")==="1");
             this.theatre.acceptIncremental(sessionId!,data,text,this.incremental.load);
           } else this.theatre.acceptScene(sessionId!, data, text);
           // Only CP4's sanitized legacy shape omitted confidence. New scene

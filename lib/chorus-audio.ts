@@ -43,6 +43,7 @@ export class ChorusAudio implements PlaybackAudio {
     } catch (error) { this.removeAttribute("src"); throw error; }
   }
   get ended() { return this.sources.every((source) => source.done); }
+  get duration() { return this.sources.every(s=>Number.isFinite(s.audio.duration)) ? Math.max(...this.sources.map(s=>s.audio.duration!)) : NaN; }
   get currentTime() { return Math.max(0, ...this.sources.map(({ audio }) => audio.currentTime)); }
   set currentTime(time: number) { this.sources.forEach((source) => { source.audio.currentTime = time; source.done = false; }); }
   capturePosition(): GroupPosition { return this.sources.map(({ audio, done }) => ({ time: audio.currentTime, ended: done })); }

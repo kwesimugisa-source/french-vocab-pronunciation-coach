@@ -22,6 +22,7 @@ import ArticleTextPanel from "@/components/article-reader/ArticleTextPanel";
 import ReadingControls from "@/components/article-reader/ReadingControls";
 import ReadingSetupBar from "@/components/article-reader/ReadingSetupBar";
 import TheatreControls from "@/components/article-reader/TheatreControls";
+import TheatreDebugPanel from "@/components/article-reader/TheatreDebugPanel";
 import AppShell from "@/components/layout/AppShell";
 import PronunciationSummary from "@/components/pronunciation/PronunciationSummary";
 import WeakPointsPanel from "@/components/pronunciation/WeakPointsPanel";
@@ -410,6 +411,7 @@ export default function Page() {
         onPractise={handlePractise}
         onFinishPractice={handleFinishPractice}
       />}
+      {article.contentType === "theatre" && <TheatreDebugPanel playback={playback} sessionId={playbackState.theatre.sessionId}/>}
 <div className="mb-6 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
   <button
     type="button"

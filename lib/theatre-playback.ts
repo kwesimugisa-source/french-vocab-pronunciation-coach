@@ -36,6 +36,9 @@ export type PlaybackAudio = {
   loop?: boolean;
   preload?: string;
   readyState?: number;
+  readonly duration?: number;
+  onplaying?: ((event: Event) => unknown) | null;
+  onloadedmetadata?: ((event: Event) => unknown) | null;
   oncanplay?: ((event: Event) => unknown) | null;
   capturePosition?(): GroupPosition;
   restorePosition?(position: GroupPosition): void;
@@ -78,12 +81,19 @@ export function canPractise(clip: TheatreClip): boolean {
 }
 
 /** Session-owned, event-driven playback. No suspended per-clip promise loops. */
+type PlaybackDiagnostic = { index: number; session: number; attempt: number; call: number; phase: "logical" | "ready" | "buffering" | "play" | "ended" | "advance" | "failed" | "media_started" | "progress" | "metadata" | "play_resolved" | "cancelled" | "stale"; at: number; currentTime?: number | null; duration?: number | null; reason?: string };
 export class TheatrePlaybackController {
-  private diagnostics: { index: number; phase: "logical" | "ready" | "buffering" | "play" | "ended" | "advance" | "failed"; at: number }[] = [];
+  private diagnostics: PlaybackDiagnostic[] = [];
+  private droppedEvents = 0;
+  getDroppedEvents = () => this.droppedEvents;
   getDiagnostics = () => this.diagnostics.slice();
-  private trace(index: number, phase: (typeof this.diagnostics)[number]["phase"]) {
-    this.diagnostics.push({index,phase,at:Date.now()});
-    if(this.diagnostics.length>1024) this.diagnostics.shift();
+  private trace(index: number, phase: PlaybackDiagnostic["phase"], detail: Partial<Pick<PlaybackDiagnostic,"session"|"attempt"|"call"|"currentTime"|"duration"|"reason">> = {}) {
+    this.diagnostics.push({index,phase,session:this.snapshot.sessionId,attempt:this.attempt,call:this.playCall,at:Date.now(),...detail});
+    if(this.diagnostics.length>4096) { this.diagnostics.shift();this.droppedEvents++; }
+  }
+  private mediaSample(audio: PlaybackAudio) {
+    const safe=(n: number|undefined)=>typeof n==="number" && Number.isFinite(n) && n>=0 ? Math.round(n*1000)/1000 : null;
+    return {currentTime:safe(audio.currentTime),duration:safe(audio.duration)};
   }
   private snapshot = initialSnapshot(0);
   private listeners = new Set<() => void>();
@@ -123,6 +133,7 @@ export class TheatrePlaybackController {
     this.clearWatchdog();
     if (this.audio) {
       this.audio.onended = this.audio.onerror = this.audio.ontimeupdate = null;
+      this.audio.onplaying = this.audio.onloadedmetadata = null;
       this.audio.pause();
       this.audio.removeAttribute("src");
       this.audio.load();
@@ -133,7 +144,9 @@ export class TheatrePlaybackController {
   }
 
   stop() {
+    if(this.snapshot.currentIndex>=0) this.trace(this.snapshot.currentIndex,"cancelled",{reason:"session_stopped"});
     this.diagnostics = [];
+    this.droppedEvents = 0;
     this.loadClip = null;
     this.releaseAudio();
     this.chorusCache.clear();
@@ -203,13 +216,15 @@ export class TheatrePlaybackController {
     }, 30_000);
   }
   private invokePlay(item: TheatreClip) {
-    this.trace(item.index,"play");
     const audio = this.audio!;
-    const attempt = this.attempt;
+    const attempt = this.attempt, session=this.snapshot.sessionId;
     const call = ++this.playCall;
+    this.trace(item.index,"play",{attempt,call,...this.mediaSample(audio)});
     this.armWatchdog(item, attempt);
     try {
-      void audio.play().catch(() => {
+      void audio.play().then(() => {
+        this.trace(item.index,attempt===this.attempt && call===this.playCall?"play_resolved":"stale",{session,attempt,call,...this.mediaSample(audio)});
+      }).catch(() => {
         if (attempt === this.attempt && call === this.playCall) {
           this.fail(item, "Impossible de lire cet élément. Réessayez sa lecture.");
         }
@@ -223,8 +238,8 @@ export class TheatrePlaybackController {
       this.update({ completions: [...this.snapshot.completions, { itemId: item.id, via }] });
     }
   }
-  private advance(index: number, via: "audio" | "practice") {
-    this.trace(index,"advance");
+  private advance(index: number, via: "audio" | "practice", completedAttempt=this.attempt) {
+    this.trace(index,"advance",{reason:via,attempt:completedAttempt});
     const item = this.snapshot.queue[index];
     this.recordCompletion(item, via);
     if (index + 1 < this.snapshot.queue.length) this.playItem(index + 1, "playing");
@@ -238,7 +253,7 @@ export class TheatrePlaybackController {
     startPaused = startPaused || this.captureBlocked;
     this.releaseAudio();
     const item = this.snapshot.queue[index];
-    const attempt = this.attempt;
+    const attempt = this.attempt, session=this.snapshot.sessionId;
     if(!item.pauseMs && !item.audioBase64 && this.loadClip) {
       this.trace(index,"buffering");
       this.pendingMode=mode;
@@ -247,7 +262,7 @@ export class TheatrePlaybackController {
         modelPlaying:mode==="practising"&&!startPaused,modelPaused:mode==="practising"&&startPaused,automaticAdvancement:!startPaused && mode!=="practising",
         ...(mode!=="practising"?{currentIndex:index,currentItemId:item.id}:{})});
       void this.loadClip(index,true).then(clip=>{
-        if(attempt!==this.attempt) return;
+        if(attempt!==this.attempt) { this.trace(index,"stale",{session,attempt,reason:"preparation_response"});return; }
         const paused=this.snapshot.status==="paused" || this.snapshot.modelPaused;
         this.storeClip(index,clip);
         this.playItem(index,mode,position,paused);
@@ -272,22 +287,33 @@ export class TheatrePlaybackController {
       if (typeof position === "number") audio.currentTime = position;
       else audio.restorePosition?.(position);
       let lastPosition = audio.currentTime;
+      let confirmedCall=-1, lastProgress=-Infinity;
+      const confirm=(reason: string)=>{
+        if(attempt!==this.attempt || this.snapshot.status==="paused" || this.snapshot.modelPaused) return;
+        if(confirmedCall!==this.playCall && !item.pauseMs) { confirmedCall=this.playCall; this.trace(index,"media_started",{reason,...this.mediaSample(audio)}); }
+      };
+      audio.onplaying=()=>confirm("playing_event");
+      audio.onloadedmetadata=()=>{if(attempt===this.attempt) this.trace(index,"metadata",this.mediaSample(audio));};
       audio.ontimeupdate = () => {
         if (attempt !== this.attempt || this.snapshot.status === "paused" || this.snapshot.modelPaused) return;
         if (audio.currentTime > lastPosition) {
+          confirm("media_clock_progress");
+          if(audio.currentTime-lastProgress>=1) { this.trace(index,"progress",this.mediaSample(audio));lastProgress=audio.currentTime; }
           lastPosition = audio.currentTime;
           this.armWatchdog(item, attempt);
         }
       };
       audio.onerror = () => {
+        this.trace(index,attempt===this.attempt?"failed":"stale",{session,attempt,reason:"media_error",...this.mediaSample(audio)});
         if (attempt === this.attempt) this.fail(item, "Erreur audio sur cet élément.");
       };
       audio.onended = () => {
-        if (attempt !== this.attempt || this.snapshot.status === "paused" || this.snapshot.modelPaused) return;
-        this.trace(index,"ended");
+        if (attempt !== this.attempt) { this.trace(index,"stale",{session,attempt,reason:"ended_event"});return; }
+        if(this.snapshot.status === "paused" || this.snapshot.modelPaused) return;
+        this.trace(index,"ended",{reason:item.pauseMs?"timed_pause":"media_event",...this.mediaSample(audio)});
         this.releaseAudio(); // Invalidate this attempt before any advancement.
         if (mode === "practising") this.update({ status: "practising", modelPlaying: false });
-        else if (this.snapshot.automaticAdvancement) this.advance(index, "audio");
+        else if (this.snapshot.automaticAdvancement) this.advance(index, "audio",attempt);
       };
       if (startPaused) this.pausedMode = mode === "replaying" ? "replaying" : "playing";
       else this.invokePlay(item);

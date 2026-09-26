@@ -47,6 +47,7 @@ export class SynchronizedChorus implements PlaybackAudio {
     void this.ready.catch(() => {});
   }
   get ended() { return this.positions.every(p => p.ended); }
+  get duration() { return this.prepared ? Math.max(...this.prepared.buffers.map((b,i)=>this.prepared!.timing[i].delay+(b.duration-this.prepared!.timing[i].offset)/this.prepared!.timing[i].rate)) : NaN; }
   get currentTime() { return this.capturePosition().reduce((sum,p) => sum + p.time, 0) / this.positions.length; }
   set currentTime(time: number) {
     this.pause();

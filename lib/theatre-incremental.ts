@@ -20,7 +20,7 @@ export function assertTheatreManifest(value: unknown, source: string): asserts v
 
 export const THEATRE_PREPARATION_CONCURRENCY = 2;
 export const THEATRE_LOOKAHEAD = 6;
-export type PreparationEvent = { index: number; component?: number; phase: "queued" | "request" | "prepared" | "cached" | "failed"; at: number };
+export type PreparationEvent = { index: number; component?: number; session: number; attempt: number; phase: "queued" | "request" | "prepared" | "cached" | "failed" | "cancelled" | "stale"; at: number };
 /** Two active logical jobs maximum; chorus components remain sequential within
  * each job. Completed components survive retries. No content leaves diagnostics. */
 export class IncrementalTheatreLoader {
@@ -28,10 +28,33 @@ export class IncrementalTheatreLoader {
   private active = 0;
   private waiting: { index: number; start: () => void }[] = [];
   private diagnostics: PreparationEvent[] = [];
+  private droppedEvents = 0;
+  getDroppedEvents = () => this.droppedEvents;
+  private attempts = new Map<number,number>();
+  private delivery = new Map<string,unknown>();
+  private deliveryBytes = 0;
+  getDelivery = (index: number, component = 0) => structuredClone(this.delivery.get(`${index}:${component}`) ?? null);
+  private captureDelivery(index: number, component: number, value: unknown) {
+    if(!this.debug || !value || typeof value!=="object") return;
+    // Server constructs this allowlisted object. Never retain the response/audio/token.
+    const d=value as Record<string,unknown>;
+    const safe={capture:{session:this.session,attempt:this.attempts.get(index)??0,index,component},kind:d.kind,item:d.item,componentIndex:d.componentIndex,performanceStyle:d.performanceStyle,language:d.language,
+      direction:d.direction,tts:d.tts,director:d.director,requestOutcome:d.requestOutcome,provenance:d.provenance};
+    const bytes=JSON.stringify(safe).length;
+    if(bytes>32_000) return;
+    const key=`${index}:${component}`;
+    if(this.delivery.has(key)) this.deliveryBytes-=JSON.stringify(this.delivery.get(key)).length;
+    this.delivery.delete(key);
+    while(this.delivery.size>=256 || this.deliveryBytes+bytes>2_000_000) {
+      const oldest=this.delivery.keys().next().value!;
+      this.deliveryBytes-=JSON.stringify(this.delivery.get(oldest)).length; this.delivery.delete(oldest);
+    }
+    this.delivery.set(key,safe);this.deliveryBytes+=bytes;
+  }
   getDiagnostics = () => this.diagnostics.slice();
   private trace(index: number, phase: PreparationEvent["phase"], component?: number) {
-    this.diagnostics.push({index,phase,component,at:Date.now()});
-    if(this.diagnostics.length>1024) this.diagnostics.shift();
+    this.diagnostics.push({index,phase,component,session:this.session,attempt:this.attempts.get(index)??0,at:Date.now()});
+    if(this.diagnostics.length>1024) { this.diagnostics.shift();this.droppedEvents++; }
   }
   private promote(index: number) {
     const position=this.waiting.findIndex(job=>job.index===index);
@@ -46,13 +69,14 @@ export class IncrementalTheatreLoader {
   private release() { const next=this.waiting.shift(); if(next) next.start(); else this.active--; }
   private pending = new Map<number, Promise<TheatreClip>>();
   private clips: TheatreClip[];
-  constructor(private manifest: TheatreManifest, private fetchAudio: typeof fetch, private headers: () => Record<string,string>) {
+  constructor(private manifest: TheatreManifest, private fetchAudio: typeof fetch, private headers: () => Record<string,string>, private session=0, private debug=false) {
     this.clips = structuredClone(manifest.clips);
   }
-  dispose() { this.abort.abort(); }
+  dispose() { for(const index of this.pending.keys()) this.trace(index,"cancelled"); this.abort.abort(); }
   load = (index: number, required = false): Promise<TheatreClip> => {
     if (this.abort.signal.aborted) return Promise.reject(new Error("cancelled"));
     if (this.pending.has(index)) { if(required) this.promote(index); return this.pending.get(index)!; }
+    this.attempts.set(index,(this.attempts.get(index)??0)+1);
     this.trace(index,"queued");
     const task = this.slot(index,required).then(async () => {
       try {
@@ -66,10 +90,14 @@ export class IncrementalTheatreLoader {
         if (parts[componentIndex].audioBase64) { this.trace(index,"cached",componentIndex); continue; }
         this.trace(index,"request",componentIndex);
         const response = await this.fetchAudio("/api/theatre-clip", {method:"POST",headers:{"Content-Type":"application/json",...this.headers()},
-          body:JSON.stringify({sceneToken:this.manifest.sceneToken,itemId:clip.id,componentIndex}),signal:this.abort.signal});
+          body:JSON.stringify({sceneToken:this.manifest.sceneToken,itemId:clip.id,componentIndex,...(this.debug?{debug:true}:{})}),signal:this.abort.signal});
+        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex);
         this.abort.signal.throwIfAborted();
+        const data = await response.json().catch(()=>null);
+        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex);
+        this.abort.signal.throwIfAborted();
+        this.captureDelivery(index,componentIndex,data?.debug);
         if (!response.ok) throw new ClipPreparationError(response.status===429 ? "Préparation temporairement limitée. Patientez, puis réessayez cet élément." : response.status===410 ? "La session de préparation a expiré. Relancez la scène." : "Impossible de préparer cet élément. Réessayez; les passages prêts sont conservés.");
-        const data = await response.json();
         this.abort.signal.throwIfAborted();
         if (data?.mode !== "theatre-component" || data.itemId !== clip.id || data.componentIndex !== componentIndex ||
           data.voice !== parts[componentIndex].voice || data.speed !== clip.speed || typeof data.audioBase64 !== "string" ||

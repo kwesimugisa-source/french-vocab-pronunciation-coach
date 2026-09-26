@@ -12,6 +12,7 @@ export class TheatrePause implements PlaybackAudio {
   private started = 0;
   private epoch = 0;
   constructor(private durationMs: number, private env: PlaybackEnvironment) {}
+  get duration() { return this.durationMs/1000; }
   play() {
     if(this.timer !== null) return Promise.resolve();
     const epoch=++this.epoch;

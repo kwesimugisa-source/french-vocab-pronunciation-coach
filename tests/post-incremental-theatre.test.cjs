@@ -63,8 +63,8 @@ async function timedScene(generationMs,playMs,{concurrency,lookahead,source,styl
  assert.equal(h.stats.analyses,1);assert.ok(firstPlayAt<generationMs*3);
  const diagnostics=h.session.getTheatreDiagnostics();assert.equal(diagnostics.logicalItems,parsed.length);assert.equal(diagnostics.spokenItems,expected.length);
  assert.deepEqual(diagnostics.preparation.filter(e=>e.phase==='prepared').map(e=>e.index).sort((a,b)=>a-b),parsed.filter(i=>!i.pauseMs).map(i=>i.index));
- assert.ok(diagnostics.preparation.every(e=>Object.keys(e).every(k=>['index','component','phase','at'].includes(k))));
- assert.ok(trace.every(e=>Object.keys(e).every(k=>['index','phase','at'].includes(k))));
+ assert.ok(diagnostics.preparation.every(e=>Object.keys(e).every(k=>['index','component','phase','at','session','attempt'].includes(k))));
+ assert.ok(trace.every(e=>Object.keys(e).every(k=>['index','phase','at','session','attempt','call','currentTime','duration','reason'].includes(k))));
  off();h.session.dispose();return {buffering,peak:h.stats.peak,firstPlayAt};
 }
 for(const [label,generation,playback] of [['faster',500,1000],['similar',1000,1000],['slower',1600,1000],['very slow',3000,1000]])test(`60-item actual playback integrity: generation ${label} than playback`,async t=>{

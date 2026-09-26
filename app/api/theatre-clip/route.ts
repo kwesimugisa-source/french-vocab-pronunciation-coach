@@ -6,6 +6,7 @@ import { dramaticInstructions } from "../../../lib/theatre-direction";
 import { pronunciationInstructions } from "../../../lib/document-language";
 import { TTS_INPUT_LIMIT } from "../../../lib/content-document";
 import { semanticPause } from "../../../lib/theatre";
+import { directorDelivery } from "../../../lib/theatre-director";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Two bounded requests per client. Separate allowance from whole-read
@@ -26,21 +27,30 @@ async function handlePost(req: Request) {
   const voice=voices[body.componentIndex];
   if(!voice || item.text.length>TTS_INPUT_LIMIT) return Response.json({code:"INVALID_ITEM"},{status:400});
   const itemSpeed=item.type==="stage"?Math.max(.65,speed-.15):speed;
+  const speech = {model:"gpt-4o-mini-tts",voice,input:item.text,speed:itemSpeed,
+    instructions:pronunciationInstructions(language,dramaticInstructions(item,plan.analysis,plan.performanceStyle,{voice,items:plan.items}))};
+  const debug = body.debug === true ? {kind:"speech",item:{id:item.id,index:item.index,speaker:item.speaker,type:item.type},
+    componentIndex:body.componentIndex,performanceStyle:plan.performanceStyle,language,
+    direction:plan.direction,tts:speech,
+    director:plan.performanceStyle==="naturel" && plan.analysis?.director ? directorDelivery(item,plan.analysis.director,plan.items) : null,
+    requestOutcome:{sdkInvoked:false,audioReceived:false,providerStatus:null as number|null},
+    provenance:"exact constructed request; see requestOutcome for invocation/result; not proof of audible words"} : undefined;
   try {
     req.signal.throwIfAborted();
     const client=new OpenAI({apiKey:secret});
-    const audio=await providerCall("tts",()=>client.audio.speech.create({model:"gpt-4o-mini-tts",voice,input:item.text,speed:itemSpeed,
-      instructions:pronunciationInstructions(language,dramaticInstructions(item,plan.analysis,plan.performanceStyle,{voice,items:plan.items}))},
-      {signal:req.signal,timeout:55_000,maxRetries:0}),item.text.length);
+    const audio=await providerCall("tts",()=>{if(debug) debug.requestOutcome.sdkInvoked=true;return client.audio.speech.create(speech,
+      {signal:req.signal,timeout:55_000,maxRetries:0});},item.text.length);
     const buffer=Buffer.from(await audio.arrayBuffer());
+    if(debug) debug.requestOutcome.audioReceived=true;
     req.signal.throwIfAborted();
     // Stay below the host response-body ceiling even for a very long utterance.
-    if(!buffer.length || buffer.length>2_500_000) return Response.json({code:"AUDIO_SIZE_LIMIT"},{status:413});
-    return Response.json({mode:"theatre-component",itemId:item.id,componentIndex:body.componentIndex,voice,speed:itemSpeed,audioBase64:buffer.toString("base64")},{headers:{"Cache-Control":"no-store"}});
+    if(!buffer.length || buffer.length>2_500_000) return Response.json({code:"AUDIO_SIZE_LIMIT",...(debug?{debug}:{})},{status:413,headers:{"Cache-Control":"no-store"}});
+    return Response.json({mode:"theatre-component",itemId:item.id,componentIndex:body.componentIndex,voice,speed:itemSpeed,audioBase64:buffer.toString("base64"),...(debug?{debug}:{})},{headers:{"Cache-Control":"no-store"}});
   } catch(error) {
     const status=(error as {status?:unknown})?.status;
-    return Response.json({code:req.signal.aborted?"PREPARATION_ABORTED":status===429?"PROVIDER_RATE_LIMITED":"CLIP_FAILED"},
-      {status:req.signal.aborted?408:status===429?429:502,...(status===429?{headers:{"Retry-After":"60"}}:{})});
+    if(debug) debug.requestOutcome.providerStatus=typeof status==="number" && Number.isInteger(status) && status>=100 && status<=599 ? status : null;
+    return Response.json({code:req.signal.aborted?"PREPARATION_ABORTED":status===429?"PROVIDER_RATE_LIMITED":"CLIP_FAILED",...(debug?{debug}:{})},
+      {status:req.signal.aborted?408:status===429?429:502,headers:{"Cache-Control":"no-store",...(status===429?{"Retry-After":"60"}:{})}});
   }
 }
 export const POST=protectedRoute("reading",handlePost,{gate:clipGate,deadlineMs:65_000});
