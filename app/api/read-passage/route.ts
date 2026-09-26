@@ -118,7 +118,8 @@ async function handlePost(req: Request) {
       catch { return new Response("Style théâtral invalide.", {status:400}); }
       const scene = await generateTheatreResponse(text, playbackSpeed, (input) =>
         speechToBase64({ client, language, ...input }),
-        { performanceStyle, theatreCharacters, analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
+        { performanceStyle, theatreCharacters, directorEnabled: true, documentId: body.documentId, revision: body.revision,
+          analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, signal, maxOutputTokens, true), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       return Response.json(scene);
     }

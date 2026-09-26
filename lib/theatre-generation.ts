@@ -3,7 +3,7 @@ import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip, TheatreItem, TheatreResponse } from "./theatre";
 import { createTheatreCasting, theatreRole } from "./theatre-casting";
 import type { TheatreVoice } from "./theatre-casting";
-import { dramaticInstructions, prepareDramaticDirection } from "./theatre-direction";
+import { dramaticInstructions, prepareDramaticDirection, withinDirectorBudget } from "./theatre-direction";
 import type { SceneAnalyzer } from "./theatre-direction";
 import { noAmbience, validateAmbience } from "./theatre-ambience";
 import { validateTheatreCharacters } from "./theatre-characters";
@@ -33,18 +33,29 @@ export async function generateTheatreResponse(
   text: string,
   playbackSpeed: number,
   synthesize: (input: SpeechInput) => Promise<string>,
-  options: { performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean } = {}
+  options: { performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number } = {}
 ): Promise<TheatreResponse> {
   const performanceStyle = theatreStyle(options.performanceStyle);
   const items = parseTheatreItems(text);
   const metadata = options.theatreCharacters === undefined ? [] : validateTheatreCharacters(options.theatreCharacters, text);
   const casting = createTheatreCasting(items, options.narratorVoice, metadata);
-  const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text);
+  // Speed and delivery style do not reinterpret the scene. Canonical source,
+  // revision, generated identity labels and Director version do bind reuse.
+  const cacheScope = options.directorEnabled ? JSON.stringify({ directorVersion: 1,
+    documentId: options.documentId ?? null, revision: options.revision ?? null,
+    characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) }) : "";
+  const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text, cacheScope);
   const prior = validateAmbience(options.ambienceDecision, items);
   const ambienceDecision = prior.confidence === "high" ? prior : undefined;
   const { analysis, metadata: direction } = await prepareDramaticDirection(items,
-    reuse ? async () => reuse : options.skipAnalysis ? undefined : options.analyze, options.analysisTimeoutMs, ambienceDecision);
+    reuse ? async () => reuse : options.skipAnalysis ? undefined : options.analyze, options.analysisTimeoutMs, ambienceDecision,
+    options.directorEnabled ? { characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) } : undefined);
   if (analysis && ambienceDecision) analysis.ambience = ambienceDecision;
+  if (options.directorEnabled || analysis?.director) direction.director = {
+    version: 1, status: performanceStyle === "clarte" ? "not_applied" : analysis?.director ? "applied" : "fallback",
+    reason: performanceStyle === "clarte" || analysis?.director ? null : !analysis ? "analysis_unavailable" : !withinDirectorBudget(items) ? "plan_budget" : "invalid_or_missing_plan",
+    directedItemCount: performanceStyle === "naturel" ? analysis?.director?.lines.length ?? 0 : 0,
+  };
   // Casting and complete validated direction are fixed before concurrent TTS.
   const jobs = items.flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
     [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
@@ -95,7 +106,7 @@ export async function generateTheatreResponse(
     mode: "theatre",
     performanceStyle,
     direction,
-    ...(analysis ? { analysisCacheKey: theatreAnalysisCache.put(text, analysis) } : {}),
+    ...(analysis ? { analysisCacheKey: theatreAnalysisCache.put(text, analysis, cacheScope) } : {}),
     casting,
     ambience: ambienceDecision ?? analysis?.ambience ?? noAmbience(),
     integrity: {
