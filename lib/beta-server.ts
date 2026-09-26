@@ -6,17 +6,17 @@ export class RequestGate {
   private window = 0;
   private total = 0;
   private active = 0;
-  private clients = new Map<string, { count: number; active: Set<string> }>();
-  constructor(private now = Date.now, private limit = 120, private concurrency = 8, private clientLimit = 30) {}
+  private clients = new Map<string, { count: number; active: Map<string, number> }>();
+  constructor(private now = Date.now, private limit = 120, private concurrency = 8, private clientLimit = 30, private operationConcurrency = 1) {}
   acquire(session: string | null, operation: string): (() => void) | null {
     if (this.now()-this.window >= 60_000) { this.window=this.now(); this.total=0; for (const [id,c] of this.clients) { c.count=0; if (!c.active.size) this.clients.delete(id); } }
     const id = session && /^[0-9a-f-]{36}$/i.test(session) ? session : null;
-    const c = id ? this.clients.get(id) ?? {count:0, active:new Set<string>()} : null;
-    if (this.total >= this.limit || this.active >= this.concurrency || (c && (c.count >= this.clientLimit || c.active.has(operation)))) return null;
+    const c = id ? this.clients.get(id) ?? {count:0, active:new Map<string, number>()} : null;
+    if (this.total >= this.limit || this.active >= this.concurrency || (c && (c.count >= this.clientLimit || (c.active.get(operation) ?? 0) >= this.operationConcurrency))) return null;
     this.total++; this.active++;
-    if (c && id) { c.count++; c.active.add(operation); this.clients.set(id,c); }
+    if (c && id) { c.count++; c.active.set(operation,(c.active.get(operation) ?? 0)+1); this.clients.set(id,c); }
     let released = false;
-    return () => { if (!released) { released=true; this.active--; c?.active.delete(operation); } };
+    return () => { if (!released) { released=true; this.active--; if(c) { const remaining=(c.active.get(operation) ?? 1)-1; if(remaining) c.active.set(operation,remaining); else c.active.delete(operation); } } };
   }
 }
 const gate = new RequestGate();

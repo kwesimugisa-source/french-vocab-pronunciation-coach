@@ -1,22 +1,8 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const createLoader=require('./load-typescript.cjs');
-const {environment,deferred}=require('./playback-fixtures.cjs');
-const {analysisFor,planFor}=require('./director-fixtures.cjs');
-process.env.OPENAI_API_KEY='incremental-test-placeholder';
-const scene=Array.from({length:50},(_,i)=>`${i===20||i===40?'LE CHŒUR':i%2?'CLARA':'MARC'}: Ligne ${i+1}. Ah, nous attendons le train avec nos amis dans cette grande gare et nous cherchons les billets pour partir ensemble avant la fin de la journée.`).join('\n');
-const tick=()=>new Promise(r=>setImmediate(r));
-async function until(fn){for(let i=0;i<1500;i++){if(fn())return;await tick();}assert.fail('state did not settle');}
-function harness(speech){
- const stats={analyses:0,calls:[],requests:[],active:0,peak:0};
- class OpenAI{constructor(){this.responses={create:async b=>{stats.analyses++;const {items}=JSON.parse(b.input[1].content);return {status:'completed',output_text:JSON.stringify({...analysisFor(items),director:planFor(items)})};}};this.audio={speech:{create:async(b,o)=>{stats.calls.push({body:b,options:o});stats.active++;stats.peak=Math.max(stats.peak,stats.active);try{return speech?await speech(b,o,stats):{arrayBuffer:async()=>Buffer.from(b.input)};}finally{stats.active--;}}}};}}
- const load=createLoader({openai:OpenAI}),prepare=load('app/api/read-passage/route.ts').POST,clip=load('app/api/theatre-clip/route.ts').POST;
- const fetcher=async(url,options)=>{const before=stats.calls.length,entry={url,count:0};stats.requests.push(entry);const response=await (url.includes('theatre-clip')?clip:prepare)(new Request('http://localhost'+url,options));entry.count=stats.calls.length-before;entry.status=response.status;return response;};
- const env=environment(),session=new (load('lib/reading-playback.ts').ReadingPlaybackSession)(env,fetcher);
- const doc={documentId:'long-scene',revision:1,contentType:'theatre',language:'fr'};
- return {stats,load,prepare,clip,fetcher,env,session,doc};
-}
-const request=(body,signal)=>new Request('http://localhost/api/read-passage',{method:'POST',body:JSON.stringify(body),signal});
-for(const style of ['clarte','naturel'])test(`50 logical items ${style}: prompt start, ordered exact-once playback, one TTS per request and one Director`,async()=>{
+const {deferred}=require('./playback-fixtures.cjs');
+const {harness,until,scene,tick,request}=require('./incremental-fixtures.cjs');
+for(const style of ['clarte','naturel'])test(`50 logical items ${style}: prompt start, ordered exact-once playback, bounded TTS per request and one Director`,async()=>{
  const h=harness();await h.session.changeTheatreStyle(style,scene,'normal',h.doc);await h.session.start(scene,'normal',h.doc);
  await until(()=>h.session.theatre.getSnapshot().status==='playing');assert.ok(h.stats.calls.length<10,'starts before full synthesis');
  for(let i=0;i<50;i++){
@@ -25,7 +11,7 @@ for(const style of ['clarte','naturel'])test(`50 logical items ${style}: prompt 
   if(clip.chorus){await tick();h.env.audios.filter(a=>!a.removed).forEach(a=>a.end());}else h.env.latest().end();
  }
  assert.equal(h.session.theatre.getSnapshot().status,'completed');assert.equal(h.session.theatre.getSnapshot().completions.length,50);
- assert.equal(h.stats.analyses,1);assert.equal(h.stats.calls.length,54);assert.equal(h.stats.peak,1);
+ assert.equal(h.stats.analyses,1);assert.equal(h.stats.calls.length,54);assert.ok(h.stats.peak<=2);
  assert.deepEqual(h.stats.requests.filter(r=>r.url==='/api/read-passage').map(r=>r.count),[0]);assert.ok(h.stats.requests.filter(r=>r.url==='/api/theatre-clip').every(r=>r.count===1));
  assert.ok(h.stats.calls.every(c=>c.options.maxRetries===0&&c.options.timeout===55000&&c.options.signal));
  h.session.dispose();assert.equal(h.env.created.length,h.env.revoked.length);
@@ -59,7 +45,7 @@ test('server abort/deadline releases duplicate gate even when handler ignores ca
  const first=post(new Request('http://localhost/api',{method:'POST',headers,body:'{}'}));const duplicate=await post(new Request('http://localhost/api',{method:'POST',headers,body:'{}'}));assert.equal(duplicate.status,429);assert.equal((await first).status,408);assert.equal((await post(new Request('http://localhost/api',{method:'POST',headers,body:'{}'}))).status,408);
  const controller=new AbortController(),pending=post(new Request('http://localhost/api',{method:'POST',headers,body:'{}',signal:controller.signal}));controller.abort();assert.equal((await pending).status,408);assert.equal((await post(new Request('http://localhost/api',{method:'POST',headers,body:'{}'}))).status,408);
 });
-module.exports={harness,until,scene};
+
 
 test('later prepared items never bypass a failed earlier line; retry retains all ready audio',async()=>{
  let failing=true;const h=harness(async b=>{if(b.input==='Deux.'&&failing)throw Error('failed');return {arrayBuffer:async()=>Buffer.from(b.input)};});

@@ -66,7 +66,7 @@ export async function generateTheatreResponse(
   const plan = await prepareTheatrePlan(text, options);
   const { items, casting, analysis, direction, performanceStyle } = plan;
   // Casting and complete validated direction are fixed before concurrent TTS.
-  const jobs = items.flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
+  const jobs = items.filter(item=>!item.pauseMs).flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
     [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
     item,
     voice, componentIndex,
@@ -100,7 +100,7 @@ export async function generateTheatreResponse(
   // Never publish a partial chorus or advance an incomplete logical item.
   for (const item of items) {
     if (failedItems.some((failed) => failed.index === item.index)) continue;
-    const parts = components[item.index];
+    const parts = item.pauseMs ? [{voice:casting.members.find(m=>m.speaker===item.speaker && m.role===theatreRole(item))!.voice,audioBase64:""}] : components[item.index];
     const speed = item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : playbackSpeed;
     clips[item.index] = { ...item, ...parts[0], speed,
       ...(theatreRole(item) === "chorus" ? { chorus: { components: parts } } : {}) };

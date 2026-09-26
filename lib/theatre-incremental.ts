@@ -15,30 +15,56 @@ export function assertTheatreManifest(value: unknown, source: string): asserts v
   // Reuse the canonical identity/order checks. These validation-only markers
   // never enter the queue or reach Audio: manifest clips contain no audio yet.
   assertCompleteTheatreResponse({ ...data, integrity: { ...data.integrity, generatedClipCount: data.clips.length },
-    clips: data.clips.map(c => ({ ...c, audioBase64: "pending", ...(c.chorus ? {chorus:{components:c.chorus.components.map(p=>({...p,audioBase64:"pending"}))}} : {}) })) }, parseTheatreItems(source));
+    clips: data.clips.map(c => ({ ...c, audioBase64: c.pauseMs ? "" : "pending", ...(c.chorus ? {chorus:{components:c.chorus.components.map(p=>({...p,audioBase64:"pending"}))}} : {}) })) }, parseTheatreItems(source));
 }
 
-/** One active component request per scene, with at most two logical items of
- * lookahead requested by the controller. Completed components survive retries. */
+export const THEATRE_PREPARATION_CONCURRENCY = 2;
+export const THEATRE_LOOKAHEAD = 6;
+export type PreparationEvent = { index: number; component?: number; phase: "queued" | "request" | "prepared" | "cached" | "failed"; at: number };
+/** Two active logical jobs maximum; chorus components remain sequential within
+ * each job. Completed components survive retries. No content leaves diagnostics. */
 export class IncrementalTheatreLoader {
   private abort = new AbortController();
-  private tail: Promise<void> = Promise.resolve();
+  private active = 0;
+  private waiting: { index: number; start: () => void }[] = [];
+  private diagnostics: PreparationEvent[] = [];
+  getDiagnostics = () => this.diagnostics.slice();
+  private trace(index: number, phase: PreparationEvent["phase"], component?: number) {
+    this.diagnostics.push({index,phase,component,at:Date.now()});
+    if(this.diagnostics.length>1024) this.diagnostics.shift();
+  }
+  private promote(index: number) {
+    const position=this.waiting.findIndex(job=>job.index===index);
+    if(position>0) this.waiting.unshift(...this.waiting.splice(position,1));
+  }
+  private async slot(index: number, required: boolean) {
+    if(this.active>=THEATRE_PREPARATION_CONCURRENCY) await new Promise<void>(resolve=>{
+      this.waiting.push({index,start:resolve}); if(required) this.promote(index);
+    });
+    else this.active++;
+  }
+  private release() { const next=this.waiting.shift(); if(next) next.start(); else this.active--; }
   private pending = new Map<number, Promise<TheatreClip>>();
   private clips: TheatreClip[];
   constructor(private manifest: TheatreManifest, private fetchAudio: typeof fetch, private headers: () => Record<string,string>) {
     this.clips = structuredClone(manifest.clips);
   }
   dispose() { this.abort.abort(); }
-  load = (index: number): Promise<TheatreClip> => {
+  load = (index: number, required = false): Promise<TheatreClip> => {
     if (this.abort.signal.aborted) return Promise.reject(new Error("cancelled"));
-    if (this.pending.has(index)) return this.pending.get(index)!;
-    const task = this.tail.then(async () => {
+    if (this.pending.has(index)) { if(required) this.promote(index); return this.pending.get(index)!; }
+    this.trace(index,"queued");
+    const task = this.slot(index,required).then(async () => {
+      try {
+      this.abort.signal.throwIfAborted();
       const clip = this.clips[index];
       if (!clip) throw new Error("Élément invalide.");
+      if (clip.pauseMs) return structuredClone(clip);
       const parts = clip.chorus?.components ?? [{voice:clip.voice,audioBase64:clip.audioBase64}];
       for (let componentIndex=0; componentIndex<parts.length; componentIndex++) {
         this.abort.signal.throwIfAborted();
-        if (parts[componentIndex].audioBase64) continue;
+        if (parts[componentIndex].audioBase64) { this.trace(index,"cached",componentIndex); continue; }
+        this.trace(index,"request",componentIndex);
         const response = await this.fetchAudio("/api/theatre-clip", {method:"POST",headers:{"Content-Type":"application/json",...this.headers()},
           body:JSON.stringify({sceneToken:this.manifest.sceneToken,itemId:clip.id,componentIndex}),signal:this.abort.signal});
         this.abort.signal.throwIfAborted();
@@ -50,10 +76,12 @@ export class IncrementalTheatreLoader {
           !data.audioBase64 || data.audioBase64.length > 3_500_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.audioBase64)) throw new Error("Audio reçu invalide. Réessayez cet élément.");
         parts[componentIndex].audioBase64 = data.audioBase64;
         if (componentIndex===0) clip.audioBase64=data.audioBase64;
+        this.trace(index,"prepared",componentIndex);
       }
       return structuredClone(clip);
+      } catch(error) { this.trace(index,"failed"); throw error; }
+      finally { this.release(); }
     });
-    this.tail = task.then(()=>{},()=>{});
     this.pending.set(index, task);
     void task.finally(()=>this.pending.delete(index)).catch(()=>{});
     return task;

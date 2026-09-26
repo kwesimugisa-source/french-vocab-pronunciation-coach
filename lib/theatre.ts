@@ -13,7 +13,18 @@ export type TheatreItem = {
   text: string;
   /** One-based physical source lines contributing to this item's text. */
   sourceLines: number[];
+  /** Canonical, non-spoken dramatic beat. Text/source identity remain intact. */
+  pauseMs?: number;
 };
+
+export const SEMANTIC_PAUSE_MS = 900;
+export function semanticPause(text: string): number | undefined {
+  // Deliberately narrow whole-direction grammar, never dialogue or action prose.
+  if (!isStageDirection(text)) return undefined;
+  const meaning = text.trim().slice(1, -1).trim().replace(/[.!…]+$/u, "").trim().toLocaleLowerCase("fr");
+  return /^(?:(?:un|une) )?(?:(?:court|courte|bref|brève|long|longue) )?(?:silence|pause|temps)$/u.test(meaning)
+    ? SEMANTIC_PAUSE_MS : undefined;
+}
 
 export type TheatreClip = TheatreItem & {
   /** Separate cached sources; still ONE logical item. Primary audio retained for legacy clients. */
@@ -35,7 +46,7 @@ export type TheatreResponse = {
   integrity: {
     version: 1;
     parsedItemCount: number;
-    /** All current parsed items are spoken, including stage directions. */
+    /** All logical items, including timed non-spoken beats. */
     expectedItemIds: string[];
     generatedClipCount: number;
   };
@@ -56,6 +67,7 @@ export function parseTheatreItems(text: string): TheatreItem[] {
       speaker,
       text,
       sourceLines: [sourceLine],
+      ...(type === "stage" && semanticPause(text) ? { pauseMs: semanticPause(text) } : {}),
     });
   }
 
@@ -140,12 +152,13 @@ export function assertCompleteTheatreResponse(
       !clip || integrity.expectedItemIds[index] !== item.id ||
       clip.id !== item.id || clip.index !== item.index ||
       clip.type !== item.type || clip.speaker !== item.speaker || clip.text !== item.text ||
+      clip.pauseMs !== item.pauseMs ||
       !Array.isArray(clip.sourceLines) ||
       clip.sourceLines.length !== item.sourceLines.length ||
       clip.sourceLines.some((line, i) => line !== item.sourceLines[i]) ||
       typeof clip.voice !== "string" || !clip.voice ||
       typeof clip.speed !== "number" || !Number.isFinite(clip.speed) || clip.speed <= 0 ||
-      typeof clip.audioBase64 !== "string" || !clip.audioBase64.trim()
+      typeof clip.audioBase64 !== "string" || (item.pauseMs ? clip.audioBase64 !== "" || !!clip.chorus : !clip.audioBase64.trim())
     ) invalid();
     if (clip.chorus !== undefined) {
       const parts = clip.chorus?.components;

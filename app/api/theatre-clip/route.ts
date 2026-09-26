@@ -5,11 +5,12 @@ import { theatreRole } from "../../../lib/theatre-casting";
 import { dramaticInstructions } from "../../../lib/theatre-direction";
 import { pronunciationInstructions } from "../../../lib/document-language";
 import { TTS_INPUT_LIMIT } from "../../../lib/content-document";
+import { semanticPause } from "../../../lib/theatre";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// One serialized request per client. Separate bounded allowance from whole-read
+// Two bounded requests per client. Separate allowance from whole-read
 // actions: a long scene is not 50 learner duplicate clicks.
-const clipGate = new RequestGate(Date.now, 240, 4, 120);
+const clipGate = new RequestGate(Date.now, 240, 4, 120, 2);
 async function handlePost(req: Request) {
   const secret=process.env.OPENAI_API_KEY;
   if(!secret) return Response.json({code:"PROVIDER_FAILED"},{status:503});
@@ -19,7 +20,8 @@ async function handlePost(req: Request) {
   catch { return Response.json({code:"SCENE_EXPIRED"},{status:410}); }
   const {plan,speed,language}=ticket;
   const item=plan.items.find(i=>i.id===body.itemId);
-  if(!item || !Number.isInteger(body.componentIndex)) return Response.json({code:"INVALID_ITEM"},{status:400});
+  // Also reject semantic silence in a still-valid token issued before this repair.
+  if(!item || item.pauseMs || (item.type==="stage" && semanticPause(item.text)) || !Number.isInteger(body.componentIndex)) return Response.json({code:"INVALID_ITEM"},{status:400});
   const voices=theatreRole(item)==="chorus"?plan.casting.chorus.voices:[plan.casting.members.find(m=>m.speaker===item.speaker && m.role===theatreRole(item))!.voice];
   const voice=voices[body.componentIndex];
   if(!voice || item.text.length>TTS_INPUT_LIMIT) return Response.json({code:"INVALID_ITEM"},{status:400});

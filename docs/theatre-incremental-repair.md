@@ -1,5 +1,7 @@
 # Theatre incremental preparation repair
 
+Historical initial repair. The subsequent [production acceptance repair](post-incremental-theatre-repair.md) supersedes its one-worker/two-item policy with two workers/six items and adds semantic silence.
+
 ## Confirmed production cause
 
 The user supplied Vercel evidence: `/api/read-passage` reached `FUNCTION_INVOCATION_TIMEOUT` at 300.1 seconds, after one scene-analysis request and approximately 50 speech requests. Later duplicate/rate-limit responses were separate from this original failure. This repair does not increase the hosting timeout.

@@ -7,7 +7,7 @@ module.exports = function completeReading(load) {
   const response=await prepare(req);if(!response.ok || !response.headers.get('content-type')?.includes('application/json'))return response;
   const data=await response.clone().json();if(data.protocol!=='incremental-v1')return response;
   const failedItems=[];let generated=0;
-  for(const clip of data.clips){let failed=false;const parts=clip.chorus?.components??[{voice:clip.voice,audioBase64:''}];
+  for(const clip of data.clips){if(clip.pauseMs){generated++;continue;}let failed=false;const parts=clip.chorus?.components??[{voice:clip.voice,audioBase64:''}];
    for(let i=0;i<parts.length;i++){
     const reply=await component(new Request(new URL('/api/theatre-clip',req.url),{method:'POST',body:JSON.stringify({sceneToken:data.sceneToken,itemId:clip.id,componentIndex:i}),signal:req.signal}));
     if(!reply.ok){failed=true;continue;}const audio=await reply.json();parts[i].audioBase64=audio.audioBase64;if(!i)clip.audioBase64=audio.audioBase64;

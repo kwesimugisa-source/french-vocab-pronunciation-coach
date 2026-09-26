@@ -31,6 +31,13 @@ type ReadingSnapshot = {
  */
 export class ReadingPlaybackSession {
   readonly theatre: TheatrePlaybackController;
+  /** Local bounded inspection only: no dialogue, speaker names, tokens or audio. */
+  getTheatreDiagnostics = () => ({
+    logicalItems: this.theatre.getSnapshot().queue.length,
+    spokenItems: this.theatre.getSnapshot().queue.filter(item=>!item.pauseMs).length,
+    playback: this.theatre.getDiagnostics(),
+    preparation: this.incremental?.getDiagnostics() ?? [],
+  });
   readonly conversation: ConversationPlayback;
   readonly preparation = new Preparation();
   private analysisCache: { key: string; reference?: string; ambience?: AmbienceRecommendation; retryAt: number } | null = null;
