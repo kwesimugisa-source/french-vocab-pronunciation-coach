@@ -29,7 +29,7 @@ for(const text of ['Thomas !','Thomas ?','Alice !','Paul ?','Rose.','Marc…','O
 });
 test('linguistic guards are narrow, independent from acting style and never respell input',()=>{
  const load=createLoader(),{parseTheatreItems}=load('lib/theatre.ts'),{theatreLinguisticGuidance}=load('lib/theatre-linguistic.ts');
- for(const text of ['[Thomas regarde la porte.]','JULIEN: Cette longue phrase garde son texte exact.'])assert.equal(theatreLinguisticGuidance(parseTheatreItems(text)[0]),'');
+ for(const text of ['JULIEN: Cette longue phrase garde son texte exact.'])assert.equal(theatreLinguisticGuidance(parseTheatreItems(text)[0]),'');
  assert.match(theatreLinguisticGuidance(parseTheatreItems('JULIEN: « Elle a dit oui ? »')[0]),/interrogative/);
  const {dramaticInstructions}=load('lib/theatre-direction.ts'),item=parseTheatreItems('JULIEN: Thomas ?')[0];
  for(const style of ['clarte','naturel'])assert.match(dramaticInstructions(item,null,style),/Short French-context utterance/);

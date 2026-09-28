@@ -1,6 +1,7 @@
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip, TheatreResponse } from "./theatre";
 import { isChorusSpeaker } from "./theatre-speakers";
+import { validateTheatreAudio } from "./theatre-audio-validation";
 
 export class ClipPreparationError extends Error {}
 
@@ -20,7 +21,7 @@ export function assertTheatreManifest(value: unknown, source: string): asserts v
 
 export const THEATRE_PREPARATION_CONCURRENCY = 2;
 export const THEATRE_LOOKAHEAD = 6;
-export type PreparationEvent = { index: number; component?: number; session: number; attempt: number; phase: "queued" | "request" | "prepared" | "cached" | "failed" | "cancelled" | "stale"; at: number };
+export type PreparationEvent = { index: number; component?: number; session: number; attempt: number; phase: "queued" | "request" | "prepared" | "cached" | "failed" | "cancelled" | "stale" | "validation_valid" | "validation_invalid" | "validation_unavailable"; at: number };
 /** Two active logical jobs maximum; chorus components remain sequential within
  * each job. Completed components survive retries. No content leaves diagnostics. */
 export class IncrementalTheatreLoader {
@@ -69,7 +70,7 @@ export class IncrementalTheatreLoader {
   private release() { const next=this.waiting.shift(); if(next) next.start(); else this.active--; }
   private pending = new Map<number, Promise<TheatreClip>>();
   private clips: TheatreClip[];
-  constructor(private manifest: TheatreManifest, private fetchAudio: typeof fetch, private headers: () => Record<string,string>, private session=0, private debug=false) {
+  constructor(private manifest: TheatreManifest, private fetchAudio: typeof fetch, private headers: () => Record<string,string>, private session=0, private debug=false, private validateAudio=validateTheatreAudio) {
     this.clips = structuredClone(manifest.clips);
   }
   dispose() { for(const index of this.pending.keys()) this.trace(index,"cancelled"); this.abort.abort(); }
@@ -102,6 +103,11 @@ export class IncrementalTheatreLoader {
         if (data?.mode !== "theatre-component" || data.itemId !== clip.id || data.componentIndex !== componentIndex ||
           data.voice !== parts[componentIndex].voice || data.speed !== clip.speed || typeof data.audioBase64 !== "string" ||
           !data.audioBase64 || data.audioBase64.length > 3_500_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.audioBase64)) throw new Error("Audio reçu invalide. Réessayez cet élément.");
+        const validation = await this.validateAudio(data.audioBase64, this.abort.signal);
+        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex);
+        this.abort.signal.throwIfAborted();
+        this.trace(index,`validation_${validation.status}`,componentIndex);
+        if(validation.status === "invalid") throw new ClipPreparationError("Audio reçu inutilisable. Réessayez cet élément; les passages prêts sont conservés.");
         parts[componentIndex].audioBase64 = data.audioBase64;
         if (componentIndex===0) clip.audioBase64=data.audioBase64;
         this.trace(index,"prepared",componentIndex);

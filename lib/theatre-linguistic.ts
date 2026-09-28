@@ -2,12 +2,12 @@ import type { TheatreItem } from "./theatre";
 
 /** Non-spoken linguistic constraints. Dramatic intent and canonical text stay intact. */
 export function theatreLinguisticGuidance(item: TheatreItem): string {
-  if (item.type !== "dialogue") return "";
+  if (item.pauseMs) return "";
   const words = item.text.match(/[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*/gu) ?? [];
   return [
-    /[?？][\s»”"')\]]*$/u.test(item.text)
-      ? "Authored linguistic form: interrogative. Preserve the French question phrasing of this exact utterance even when dramatic intent is respond, unknown, rhetorical, or another value. Do not flatten it into a declarative statement. Let context determine natural French question prosody; do not mechanically exaggerate rising intonation. Dramatic intent, subtext and fixed voice remain authoritative for acting, not for removing the authored question." : "",
-    words.length > 0 && words.length <= 3
-      ? "Short French-context utterance: resolve any proper name or cross-language-ambiguous word using its French pronunciation, not an English reading of the isolated spelling. Use French vowel values and French consonant/rhythm conventions; do not introduce English lexical stress or English diphthongs solely because a name is internationally shared. This applies equally to calls, questions and one-word reactions. Keep the exact supplied spelling and words as the spoken input; do not speak these directions, add carrier words, respell aloud, or change the assigned character voice." : "",
+    item.type === "dialogue" && /[?？]/u.test(item.text)
+      ? "Authored linguistic form: interrogative where question punctuation occurs. Preserve French question phrasing for each corresponding question, not for unrelated statements in this item, even when dramatic intent is respond, unknown or rhetorical. Do not flatten a question into a declaration; do not mechanically exaggerate rising intonation. Context determines natural prosody; Director intent, subtext and fixed voice remain unchanged." : "",
+    item.type === "stage" || (words.length > 0 && words.length <= 3)
+      ? `${item.type === "stage" ? "French-context narration" : "Short French-context utterance"}: prononcez les noms et mots ambigus dans le contexte français, jamais comme une expression anglaise isolée. Use French vowel values, consonants and rhythm, without English lexical stress or diphthongs inferred from spelling. Keep exact input and fixed voice; these directions are not spoken.` : "",
   ].filter(Boolean).join("\n");
 }
