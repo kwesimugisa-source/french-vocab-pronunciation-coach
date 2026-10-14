@@ -13,6 +13,8 @@ import { betaContext, betaHeaders, betaJournal, BetaData } from "./beta-events";
 import { requestError } from "./safe-errors";
 import type { AmbienceKind, AmbienceProvider } from "./theatre-ambience";
 import type { TheatreResponse } from "./theatre";
+import { theatreRoles } from "./theatre-role-play";
+import type { TheatreRoleRun } from "./theatre-role-play";
 import { ConversationPlayback } from "./conversation-playback";
 
 type ReadingSnapshot = {
@@ -32,6 +34,7 @@ type ReadingSnapshot = {
 export class ReadingPlaybackSession {
   readonly theatre: TheatrePlaybackController;
   private lastDebugTrace: unknown = null;
+  private roleEpoch = 0;
   exportTheatreDiagnostics = () => {
     const snapshot=this.theatre.getSnapshot();
     if(!snapshot.queue.length) return this.lastDebugTrace;
@@ -93,10 +96,10 @@ export class ReadingPlaybackSession {
   };
   private update(patch: Partial<ReadingSnapshot>) {
     const theatre = this.theatre.getSnapshot();
-    this.ambience.setActive(["playing", "paused", "replaying", "practising", "buffering"].includes(theatre.status));
+    this.ambience.setActive(["playing", "paused", "replaying", "practising", "buffering", "learner_turn"].includes(theatre.status));
     this.snapshot = { ...this.snapshot, ...patch, theatre, preparation:this.preparation.getSnapshot(), conversationPreparing:this.conversation.getSnapshot().preparing,
       busy: !!this.request || !!this.ordinary || this.conversation.getSnapshot().busy || !!theatre.practiceTarget ||
-        ["playing", "paused", "replaying", "practising", "buffering"].includes(theatre.status) };
+        ["playing", "paused", "replaying", "practising", "buffering", "learner_turn"].includes(theatre.status) };
     if (this.lifecycle && this.snapshot.mode === "theatre") {
       const status = theatre.status === "completed" ? "completed" : theatre.status === "error" ? "failed" : theatre.status === "paused" ? "paused" : ["playing","replaying","practising"].includes(theatre.status) ? (this.lifecycle.status === "paused" ? "resumed" : "started") : null;
       if (status) this.playbackEvent(status, theatre.queue.length);
@@ -129,6 +132,7 @@ export class ReadingPlaybackSession {
     this.ordinaryUrl = null;
   }
   stop() {
+    this.roleEpoch++;
     this.incremental?.dispose();
     if(this.theatre.getSnapshot().queue.length) {
       this.lastDebugTrace=this.exportTheatreDiagnostics();
@@ -185,11 +189,14 @@ export class ReadingPlaybackSession {
     if (restart) await this.start(text, speed, identity);
   }
 
-  async start(text: string, speed: string, identity?: ContentIdentity, conversationTurnId?: string) {
+  async start(text: string, speed: string, identity?: ContentIdentity, conversationTurnId?: string, learnerSpeaker?: string) {
     if (this.snapshot.busy || this.captures) return;
     this.stop();
     if (identity) {
       try { validateIdentity(identity); } catch { this.update({ error: "Identité du document invalide." }); return; }
+    }
+    if (learnerSpeaker !== undefined && (identity?.contentType !== "theatre" || !theatreRoles(text).includes(learnerSpeaker))) {
+      this.update({error:"Choisissez un personnage de cette scène."}); return;
     }
     const language = documentLanguage(identity?.language);
     const performanceStyle = identity?.contentType === "theatre" ? this.snapshot.performanceStyle : "clarte";
@@ -204,6 +211,10 @@ export class ReadingPlaybackSession {
     this.update({ mode: "pending", error: null });
     this.conversationRequest = identity?.contentType === "conversation" && !conversationTurnId;
     const sessionId = this.conversationRequest ? null : this.theatre.beginLoading();
+    const roleRun: TheatreRoleRun | undefined = learnerSpeaker !== undefined && identity ? {
+      epoch:this.roleEpoch,sessionId:sessionId!,documentId:identity.documentId,revision:identity.revision,
+      speaker:learnerSpeaker,style:performanceStyle,speed,
+    } : undefined;
     const current = () => this.request === request && !request.signal.aborted;
     let failureCode: "RATE_LIMITED" | "PROVIDER_FAILED" = "PROVIDER_FAILED";
     let failureMessage = requestError(500, "reading");
@@ -239,8 +250,8 @@ export class ReadingPlaybackSession {
             assertTheatreManifest(data,text);
             this.incremental=new IncrementalTheatreLoader(data,this.fetchAudio,betaHeaders,sessionId!,
               typeof window!=="undefined" && new URLSearchParams(window.location.search).get("theatreDebug")==="1");
-            this.theatre.acceptIncremental(sessionId!,data,text,this.incremental.load);
-          } else this.theatre.acceptScene(sessionId!, data, text);
+            this.theatre.acceptIncremental(sessionId!,data,text,this.incremental.load,roleRun);
+          } else this.theatre.acceptScene(sessionId!, data, text,roleRun);
           // Only CP4's sanitized legacy shape omitted confidence. New scene
           // reasoning must carry its own validated confidence, never invent it.
           const ambience = scene.ambience;

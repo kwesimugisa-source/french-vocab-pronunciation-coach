@@ -21,6 +21,8 @@ import ArticleHeader from "@/components/article-reader/ArticleHeader";
 import ArticleTextPanel from "@/components/article-reader/ArticleTextPanel";
 import ReadingControls from "@/components/article-reader/ReadingControls";
 import ReadingSetupBar from "@/components/article-reader/ReadingSetupBar";
+import RolePlayControls from "@/components/article-reader/RolePlayControls";
+import { theatreRoles } from "@/lib/theatre-role-play";
 import TheatreControls from "@/components/article-reader/TheatreControls";
 import TheatreDebugPanel from "@/components/article-reader/TheatreDebugPanel";
 import AppShell from "@/components/layout/AppShell";
@@ -75,6 +77,18 @@ export default function Page() {
   const [readingSpeed, setReadingSpeed] = useState("normal");
 
   const [article, setArticle] = useState<ContentDocument>(() => generatedDocument(initialArticle, "news", "B1", "demo"));
+  const [roleChoice, setRoleChoice] = useState<{documentId:string;revision:number;speaker:string} | null>(null);
+  const roleEnabled = article.contentType === "theatre" && roleChoice?.documentId === article.documentId && roleChoice.revision === article.revision;
+  const roles = useMemo(() => article.contentType === "theatre" ? theatreRoles(article.text) : [], [article.contentType, article.text]);
+  const learnerSpeaker = roleEnabled && roleChoice && roles.includes(roleChoice.speaker) ? roleChoice.speaker : "";
+  function changeRole(speaker: string | null) {
+    playback.stop(); pronunciation.reset();
+    setRoleChoice(speaker === null ? null : {documentId:article.documentId,revision:article.revision,speaker});
+  }
+  function changeReadingSpeed(speed: string) {
+    if (roleEnabled && speed !== readingSpeed) { playback.stop(); pronunciation.reset(); }
+    setReadingSpeed(speed);
+  }
   const isGenerating = !!generationPending;
 
   const [showImportBox, setShowImportBox] = useState(false);
@@ -201,7 +215,7 @@ export default function Page() {
     }
     if (playback.getSnapshot().busy) handleStopPlayback();
     else {
-      void playback.start(article.text, readingSpeed, article);
+      void playback.start(article.text, readingSpeed, article, undefined, roleEnabled ? learnerSpeaker : undefined);
     }
   }
 
@@ -230,7 +244,7 @@ export default function Page() {
   }
 
   function handleStartReading() {
-    if (pronunciation.isBusy()) return;
+    if (roleEnabled || pronunciation.isBusy()) return;
     if (universalState.active) { void universal.record(); return; }
     if (article.contentType === "tongue-twisters") { void practice.record(); return; }
     let referenceText = article.text;
@@ -315,7 +329,7 @@ export default function Page() {
     }
   }
 
-  const recordingControls = (article.contentType !== "tongue-twisters" && <ReadingControls
+  const recordingControls = (!roleEnabled && article.contentType !== "tongue-twisters" && <ReadingControls
         isRecording={isRecording}
         hasRecording={!!pronunciationState.recording}
         isBusy={recordingBusy || (universalState.active && (isGenerating || !universalState.selected))}
@@ -364,11 +378,12 @@ export default function Page() {
           if (pronunciation.isBusy() || isGenerating) return;
           betaJournal.emit({...betaContext(article,readingSpeed),name:"theatre_style",performanceStyle:style});
           pronunciation.reset();
+          if (roleEnabled) playback.stop();
           void playback.changeTheatreStyle(style, article.text, readingSpeed, article);
         }}
         targetSoundId={targetSoundId} customSound={customSound}
         onTargetSoundChange={setTargetSoundId} onCustomSoundChange={setCustomSound}
-        hideAudio={article.contentType === "tongue-twisters" || universalState.active}
+        hideAudio={article.contentType === "tongue-twisters" || universalState.active || roleEnabled}
         contentType={contentType}
         level={level}
         isPlayingAudio={playbackState.busy}
@@ -380,7 +395,7 @@ export default function Page() {
         onPlayAudio={handlePlayAudio}
         onGenerateArticle={handleGenerateArticle}
         readingSpeed={readingSpeed}
-        onReadingSpeedChange={setReadingSpeed}
+        onReadingSpeedChange={changeReadingSpeed}
       />
       <PreparationNotice label={generationPending ? "Préparation du texte…" : null} />
       {article.contentType !== "tongue-twisters" && <PreparationNotice label={playbackState.preparation ? article.contentType==="theatre" ? "Préparation de la scène…" : "Préparation de la lecture…" : playbackState.conversationPreparing ? "Préparation du tour de parole…" : null} />}
@@ -395,7 +410,14 @@ export default function Page() {
         onStopRecording={handleStopReading} onAnalyze={handleAnalyzePronunciation}
       />}
       {playbackState.error && <p role="alert" className="mb-4 text-sm text-red-700">{playbackState.error}</p>}
-      {article.contentType === "theatre" && playbackState.mode !== "theatre" && <section className="mb-4 rounded-xl border p-4">
+      {article.contentType === "theatre" && <RolePlayControls
+        enabled={roleEnabled} roles={roles} speaker={learnerSpeaker} disabled={recordingBusy || isGenerating}
+        busy={playbackState.busy} playback={playbackState.theatre}
+        onEnable={enabled => changeRole(enabled ? roles[0] ?? null : null)} onSpeaker={changeRole}
+        onStart={handlePlayAudio} onStop={handleStopPlayback}
+        onContinue={turn => playback.theatre.continueLearner(turn)}
+      />}
+      {article.contentType === "theatre" && !roleEnabled && playbackState.mode !== "theatre" && <section className="mb-4 rounded-xl border p-4">
         <h2>Lecture théâtrale</h2>
         <p>Lancez la lecture IA pour préparer les voix. Pause, reprise, réécoute et pratique des répliques seront ensuite disponibles.</p>
       </section>}
@@ -476,7 +498,7 @@ export default function Page() {
 
       {!universalState.active && recordingControls}
 
-      {article.contentType !== "tongue-twisters" && (!universalState.active || pronunciationState.feedback) && <div className="mt-6 space-y-6">
+      {!roleEnabled && article.contentType !== "tongue-twisters" && (!universalState.active || pronunciationState.feedback) && <div className="mt-6 space-y-6">
         {pronunciationScore && <div className="rounded-xl border bg-white p-4">
           <p>Correspondance estimée entre transcription et texte : {pronunciationScore.overall}/100</p>
           <p className="text-sm text-slate-600">La reconnaissance vocale peut se tromper. Ce résultat ne mesure ni les sons, ni la fluidité, ni l’intonation.</p>

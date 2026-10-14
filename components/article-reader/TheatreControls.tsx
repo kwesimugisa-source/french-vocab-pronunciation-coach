@@ -17,6 +17,7 @@ type Props = {
   onFinishPractice: () => void;
 };
 const labels = {
+  learner_turn: "À vous de jouer",
   buffering: "Préparation du prochain passage…",
   idle: "Prêt", loading: "Préparation de la scène…", playing: "Lecture en cours",
   paused: "En pause", replaying: "Réécoute en cours", practising: "Pratique d’une réplique",
@@ -44,7 +45,7 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
         {labels[playback.status]}{current ? ` — élément ${playback.currentIndex + 1} sur ${playback.queue.length}` : ""}
       </p>
       {!!playback.queue.length && <p className="text-xs text-slate-600">{playback.completions.length} / {playback.queue.length} éléments terminés</p>}
-      {current && !practice && <p className="mt-3 max-w-[68ch] rounded-xl bg-slate-50 p-3 leading-7 whitespace-pre-wrap break-words"><strong>{current.speaker} : </strong>{current.text}</p>}
+      {current && !practice && !playback.learnerTurn && <p className="mt-3 max-w-[68ch] rounded-xl bg-slate-50 p-3 leading-7 whitespace-pre-wrap break-words"><strong>{current.speaker} : </strong>{current.text}</p>}
       {playback.error && <p role="alert" className="mt-3 text-sm text-red-700">
         {playback.error.message} {playback.error.itemId && `Élément ${playback.error.index + 1} (${playback.error.itemId}).`}
       </p>}
@@ -54,7 +55,7 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
         <button type="button" className={button} onClick={onResume}
           disabled={recordingBusy || (playback.status !== "paused" && !playback.modelPaused)}>Reprendre</button>
         <button type="button" className={button} onClick={onReplay}
-          disabled={recordingBusy || !current}>{playback.status === "error" ? "Réessayer cet élément" : "Réécouter depuis le début"}</button>
+          disabled={recordingBusy || !current || !!playback.learnerTurn}>{playback.status === "error" ? "Réessayer cet élément" : "Réécouter depuis le début"}</button>
         <button type="button" className={button} onClick={onStop}>Arrêter la scène</button>
       </div>
       {practice && (
@@ -75,7 +76,7 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
           </button>
         </div>
       )}
-      <details className="mt-4">
+      {!playback.roleRun && <details className="mt-4">
         <summary className="cursor-pointer text-sm font-medium">Choisir une réplique à pratiquer</summary>
         <p className="mt-2 text-xs text-slate-600">Pour une autre réplique, la lecture revient ensuite au point d’écoute conservé. Les didascalies et le chœur restent en lecture seule.</p>
         <ol className="mt-3 max-h-80 space-y-2 overflow-y-auto">
@@ -89,7 +90,7 @@ export default function TheatreControls({ playback, recordingBusy, onPause, onRe
             </li>
           ))}
         </ol>
-      </details>
+      </details>}
     </section>
   );
 }

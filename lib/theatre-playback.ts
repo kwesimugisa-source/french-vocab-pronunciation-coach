@@ -5,9 +5,11 @@ import type { TheatreClip } from "./theatre";
 import { ChorusAudio } from "./chorus-audio";
 import { SynchronizedChorus } from "./synchronized-chorus";
 import type { ChorusContext, ChorusBufferCache } from "./synchronized-chorus";
+import { selectableTheatreRoles } from "./theatre-role-play";
+import type { TheatreRoleRun, LearnerTurn } from "./theatre-role-play";
 import { isChorusSpeaker } from "./theatre-speakers";
 
-export type PlaybackState = "idle" | "loading" | "buffering" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
+export type PlaybackState = "learner_turn" | "idle" | "loading" | "buffering" | "playing" | "paused" | "replaying" | "practising" | "completed" | "error";
 export type PracticeTarget = {
   sessionId: number;
   itemId: string;
@@ -23,9 +25,11 @@ export type TheatrePlaybackSnapshot = {
   currentItemId: string | null;
   automaticAdvancement: boolean;
   practiceTarget: PracticeTarget | null;
+  roleRun: TheatreRoleRun | null;
+  learnerTurn: LearnerTurn | null;
   modelPlaying: boolean;
   modelPaused: boolean;
-  completions: readonly { itemId: string; via: "audio" | "practice" }[];
+  completions: readonly { itemId: string; via: "audio" | "practice" | "learner" }[];
   error: { itemId: string | null; index: number; message: string } | null;
 };
 
@@ -73,7 +77,7 @@ export const browserPlaybackEnvironment: PlaybackEnvironment = {
 const initialSnapshot = (sessionId: number): TheatrePlaybackSnapshot => ({
   sessionId, status: "idle", queue: [], currentIndex: -1, currentItemId: null,
   automaticAdvancement: false, practiceTarget: null, modelPlaying: false, modelPaused: false,
-  completions: [], error: null,
+  completions: [], error: null, roleRun: null, learnerTurn: null,
 });
 
 export function canPractise(clip: TheatreClip): boolean {
@@ -164,21 +168,42 @@ export class TheatrePlaybackController {
     if (sessionId !== this.snapshot.sessionId) return;
     this.update({ status: "error", error: { itemId: null, index: -1, message } });
   }
-  acceptScene(sessionId: number, data: unknown, sourceText: string) {
+  private acceptedRole(run: TheatreRoleRun | undefined, items: readonly TheatreClip[]): TheatreRoleRun | null {
+    if (!run) return null;
+    if (run.sessionId !== this.snapshot.sessionId || !selectableTheatreRoles(items).includes(run.speaker))
+      throw new Error("Le personnage choisi ne correspond pas à cette scène.");
+    return Object.freeze({ ...run });
+  }
+  private learnerOwns(item: TheatreClip) {
+    return !!this.snapshot.roleRun && item.type === "dialogue" && item.speaker === this.snapshot.roleRun.speaker;
+  }
+  continueLearner(turn: LearnerTurn) {
+    // The exact immutable turn is the action token; a stale/double click cannot
+    // continue a later turn, even with the same source line ID in a new document.
+    if (this.captureBlocked || this.snapshot.status !== "learner_turn" ||
+        this.snapshot.learnerTurn !== turn || this.snapshot.roleRun !== turn.run ||
+        turn.run.sessionId !== this.snapshot.sessionId || turn.index !== this.snapshot.currentIndex ||
+        turn.itemId !== this.snapshot.currentItemId) return false;
+    this.update({ learnerTurn: null });
+    this.advance(turn.index, "learner");
+    return true;
+  }
+  acceptScene(sessionId: number, data: unknown, sourceText: string, roleRun?: TheatreRoleRun) {
     if (sessionId !== this.snapshot.sessionId || this.snapshot.status !== "loading") return false;
     assertCompleteTheatreResponse(data, parseTheatreItems(sourceText));
-    this.update({ queue: data.clips, currentIndex: data.clips.length ? 0 : -1 });
+    this.update({ queue: data.clips, currentIndex: data.clips.length ? 0 : -1, roleRun: this.acceptedRole(roleRun, data.clips) });
     if (!data.clips.length) this.update({ status: "completed" });
     else this.playItem(0, "playing");
     return true;
   }
 
-  acceptIncremental(sessionId: number, data: unknown, source: string, loadClip: (index: number, required?: boolean) => Promise<TheatreClip>) {
+  acceptIncremental(sessionId: number, data: unknown, source: string, loadClip: (index: number, required?: boolean) => Promise<TheatreClip>, roleRun?: TheatreRoleRun) {
     if (sessionId !== this.snapshot.sessionId || this.snapshot.status !== "loading") return false;
     assertTheatreManifest(data, source);
+    const acceptedRole = this.acceptedRole(roleRun, data.clips);
     this.loadClip = loadClip;
     data.clips.forEach(c=>this.trace(c.index,"logical"));
-    this.update({queue:data.clips,currentIndex:data.clips.length?0:-1});
+    this.update({queue:data.clips,currentIndex:data.clips.length?0:-1,roleRun:acceptedRole});
     if(data.clips.length) this.playItem(0,"playing");
     else this.update({status:"completed"});
     return true;
@@ -193,7 +218,7 @@ export class TheatrePlaybackController {
     const loader=this.loadClip, session=this.snapshot.sessionId;
     if(!loader) return;
     for(let i=index+1;i<=Math.min(index+THEATRE_LOOKAHEAD,this.snapshot.queue.length-1);i++) {
-      if(this.snapshot.queue[i].audioBase64 || this.snapshot.queue[i].pauseMs) continue;
+      if(this.snapshot.queue[i].audioBase64 || this.snapshot.queue[i].pauseMs || this.learnerOwns(this.snapshot.queue[i])) continue;
       void loader(i).then(clip=>{
         if(session===this.snapshot.sessionId && loader===this.loadClip) this.storeClip(i,clip);
       }).catch(()=>{}); // Required playback retries the missing item, never skips it.
@@ -233,12 +258,12 @@ export class TheatrePlaybackController {
       if (attempt === this.attempt) this.fail(item, "Impossible de lire cet élément.");
     }
   }
-  private recordCompletion(item: TheatreClip, via: "audio" | "practice") {
+  private recordCompletion(item: TheatreClip, via: "audio" | "practice" | "learner") {
     if (!this.snapshot.completions.some((entry) => entry.itemId === item.id)) {
       this.update({ completions: [...this.snapshot.completions, { itemId: item.id, via }] });
     }
   }
-  private advance(index: number, via: "audio" | "practice", completedAttempt=this.attempt) {
+  private advance(index: number, via: "audio" | "practice" | "learner", completedAttempt=this.attempt) {
     this.trace(index,"advance",{reason:via,attempt:completedAttempt});
     const item = this.snapshot.queue[index];
     this.recordCompletion(item, via);
@@ -254,6 +279,12 @@ export class TheatrePlaybackController {
     this.releaseAudio();
     const item = this.snapshot.queue[index];
     const attempt = this.attempt, session=this.snapshot.sessionId;
+    if (this.learnerOwns(item)) {
+      const learnerTurn = Object.freeze({run:this.snapshot.roleRun!,itemId:item.id,index:item.index,speaker:item.speaker,text:item.text});
+      this.update({status:"learner_turn",currentIndex:index,currentItemId:item.id,learnerTurn,
+        automaticAdvancement:false,practiceTarget:null,modelPlaying:false,modelPaused:false,error:null});
+      return;
+    }
     if(!item.pauseMs && !item.audioBase64 && this.loadClip) {
       this.trace(index,"buffering");
       this.pendingMode=mode;
@@ -364,7 +395,7 @@ export class TheatrePlaybackController {
     else this.invokePlay(this.snapshot.queue[this.snapshot.currentIndex]);
   }
   replay() {
-    if (this.captureBlocked) return;
+    if (this.captureBlocked || this.snapshot.learnerTurn) return;
     const target = this.snapshot.practiceTarget;
     if (target) { this.playItem(target.index, "practising"); return; }
     if (this.snapshot.currentIndex < 0 || ["idle", "loading"].includes(this.snapshot.status)) return;
@@ -372,6 +403,7 @@ export class TheatrePlaybackController {
     this.playItem(this.snapshot.currentIndex, "replaying");
   }
   enterPractice(itemId: string): boolean {
+    if (this.snapshot.roleRun) return false; // Recording/model assistance belongs to later checkpoints.
     if (this.snapshot.practiceTarget || ["idle", "loading"].includes(this.snapshot.status)) return false;
     const item = this.snapshot.queue.find((clip) => clip.id === itemId);
     if (!item || !canPractise(item)) return false;

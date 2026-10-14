@@ -28,7 +28,7 @@ function harness() {
     subscribe = () => () => {};
     getSnapshot = () => this.snapshot;
     stop() { this.snapshot.mode = null; this.snapshot.busy = false; }
-    start(text, speed, identity) { plays.push({ text, speed, identity }); this.snapshot.mode = identity.contentType === "theatre" ? "theatre" : "ordinary"; this.snapshot.busy = true; }
+    start(text, speed, identity, _conversationTurn, learnerSpeaker) { plays.push({ text, speed, identity, learnerSpeaker }); this.snapshot.mode = identity.contentType === "theatre" ? "theatre" : "ordinary"; this.snapshot.busy = true; }
     beginMicrophoneCapture = () => () => {};
   }
   class Pronunciation {
@@ -41,7 +41,7 @@ function harness() {
     stop() { this.snapshot.status = "recorded"; this.snapshot.recording = { target: this.snapshot.target, blob: new Blob(["recording"]) }; }
   }
   const overrides = { react, "@/lib/reading-playback": { ReadingPlaybackSession: Playback }, "@/lib/pronunciation-session": { PronunciationSession: Pronunciation } };
-  for (const name of ["BetaDiagnostics", "article-reader/PreparationNotice", "article-reader/ArticleHeader", "article-reader/ArticleTextPanel", "article-reader/ReadingControls", "article-reader/ReadingSetupBar", "article-reader/TheatreControls", "article-reader/TongueTwisterPractice", "layout/AppShell", "pronunciation/PronunciationSummary", "pronunciation/WeakPointsPanel", "vocabulary/WordInsightPanel"])
+  for (const name of ["BetaDiagnostics", "article-reader/PreparationNotice", "article-reader/ArticleHeader", "article-reader/ArticleTextPanel", "article-reader/ReadingControls", "article-reader/ReadingSetupBar", "article-reader/TheatreControls", "article-reader/RolePlayControls", "article-reader/TongueTwisterPractice", "layout/AppShell", "pronunciation/PronunciationSummary", "pronunciation/WeakPointsPanel", "vocabulary/WordInsightPanel"])
     overrides[`@/components/${name}`] = name.split("/").at(-1);
   const loader = createLoader(overrides), Page = loader("app/page.tsx").default;
   function render() { cursor = 0; tree = Page(); effects.splice(0).forEach(fn => fn()); return tree; }
@@ -218,5 +218,28 @@ test("CP4.4 Theatre replay/practice events keep opaque document metadata without
     const recorded=h.journal.inspect().filter(e=>["theatre_replay","theatre_practice"].includes(e.name));
     assert.equal(recorded.length,2); assert.ok(recorded.every(e=>e.contentType==="theatre" && e.revision===1));
     assert.notEqual(recorded[0].documentId,h.document().documentId); assert.doesNotMatch(JSON.stringify(recorded),/NORA|Bonjour/);
+  } finally {h.dispose();}
+});
+
+
+test("role page lifecycle: selection/start, stop on character/speed/style, hide CP2, document/mode replacement", () => {
+  const h=harness();
+  try {
+    h.import("[La porte s’ouvre.]\nCLARA: Ah !\nMARC: Oui.");
+    assert.equal(h.find("RolePlayControls").enabled,false);
+    h.find("RolePlayControls").onEnable(true);h.render();
+    assert.equal(h.find("RolePlayControls").speaker,"CLARA");
+    assert.equal(h.setup().hideAudio,true);assert.equal(h.find("ReadingControls"),undefined);
+    h.find("RolePlayControls").onStart();h.render();assert.equal(h.plays.at(-1).learnerSpeaker,"CLARA");
+    h.find("RolePlayControls").onSpeaker("MARC");h.render();assert.equal(h.playback.snapshot.busy,false);
+    h.find("RolePlayControls").onStart();h.render();assert.equal(h.plays.at(-1).learnerSpeaker,"MARC");
+    h.setup().onReadingSpeedChange("slow");h.render();assert.equal(h.playback.snapshot.busy,false);
+    const count=h.plays.length;h.find("RolePlayControls").onStart();h.render();assert.equal(h.plays.length,count+1);assert.equal(h.plays.at(-1).speed,"slow");
+    let styleCall;h.playback.changeTheatreStyle=(...args)=>{styleCall=args;assert.equal(h.playback.snapshot.busy,false);};
+    h.setup().onTheatreStyleChange("naturel");h.render();assert.equal(styleCall[0],"naturel");assert.equal(h.playback.snapshot.busy,false);
+    h.find("RolePlayControls").onEnable(false);h.render();assert.ok(h.find("ReadingControls"));assert.equal(h.setup().hideAudio,false);
+    h.setup().onPlayAudio();assert.equal(h.plays.at(-1).learnerSpeaker,undefined);
+    h.find("RolePlayControls").onEnable(true);h.render();h.import("[Un autre lieu.]\nCLARA: Ah !\nMARC: Oui.");
+    assert.equal(h.find("RolePlayControls").enabled,false);assert.equal(h.find("RolePlayControls").speaker,"");
   } finally {h.dispose();}
 });
