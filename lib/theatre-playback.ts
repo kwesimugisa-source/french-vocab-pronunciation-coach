@@ -283,6 +283,8 @@ export class TheatrePlaybackController {
       const learnerTurn = Object.freeze({run:this.snapshot.roleRun!,itemId:item.id,index:item.index,speaker:item.speaker,text:item.text});
       this.update({status:"learner_turn",currentIndex:index,currentItemId:item.id,learnerTurn,
         automaticAdvancement:false,practiceTarget:null,modelPlaying:false,modelPaused:false,error:null});
+      // Subscribers may stop/replace the scene while the held state is published.
+      if (session === this.snapshot.sessionId && this.snapshot.learnerTurn === learnerTurn) this.prefetch(index);
       return;
     }
     if(!item.pauseMs && !item.audioBase64 && this.loadClip) {

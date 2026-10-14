@@ -21,7 +21,8 @@ export function assertTheatreManifest(value: unknown, source: string): asserts v
 
 export const THEATRE_PREPARATION_CONCURRENCY = 2;
 export const THEATRE_LOOKAHEAD = 6;
-export type PreparationEvent = { index: number; component?: number; session: number; attempt: number; phase: "queued" | "request" | "prepared" | "cached" | "failed" | "cancelled" | "stale" | "validation_valid" | "validation_invalid" | "validation_unavailable"; at: number };
+export type PreparationFailure = "http_failure" | "rate_limited" | "ticket_expired" | "network_failure" | "malformed_response" | "validation_invalid" | "cancelled" | "stale" | "internal_failure";
+export type PreparationEvent = { failureCategory?: PreparationFailure; httpStatus?: number; index: number; component?: number; session: number; attempt: number; phase: "queued" | "request" | "prepared" | "cached" | "failed" | "cancelled" | "stale" | "validation_valid" | "validation_invalid" | "validation_unavailable"; at: number };
 /** Two active logical jobs maximum; chorus components remain sequential within
  * each job. Completed components survive retries. No content leaves diagnostics. */
 export class IncrementalTheatreLoader {
@@ -53,8 +54,10 @@ export class IncrementalTheatreLoader {
     this.delivery.set(key,safe);this.deliveryBytes+=bytes;
   }
   getDiagnostics = () => this.diagnostics.slice();
-  private trace(index: number, phase: PreparationEvent["phase"], component?: number) {
-    this.diagnostics.push({index,phase,component,session:this.session,attempt:this.attempts.get(index)??0,at:Date.now()});
+  private trace(index: number, phase: PreparationEvent["phase"], component?: number, failure?: { failureCategory: PreparationFailure; httpStatus?: number }) {
+    this.diagnostics.push({index,phase,component,session:this.session,attempt:this.attempts.get(index)??0,at:Date.now(),
+      ...(failure ? {failureCategory:failure.failureCategory,
+        ...(Number.isInteger(failure.httpStatus) && failure.httpStatus! >= 100 && failure.httpStatus! <= 599 ? {httpStatus:failure.httpStatus} : {})} : {})});
     if(this.diagnostics.length>1024) { this.diagnostics.shift();this.droppedEvents++; }
   }
   private promote(index: number) {
@@ -73,13 +76,16 @@ export class IncrementalTheatreLoader {
   constructor(private manifest: TheatreManifest, private fetchAudio: typeof fetch, private headers: () => Record<string,string>, private session=0, private debug=false, private validateAudio=validateTheatreAudio) {
     this.clips = structuredClone(manifest.clips);
   }
-  dispose() { for(const index of this.pending.keys()) this.trace(index,"cancelled"); this.abort.abort(); }
+  dispose() { for(const index of this.pending.keys()) this.trace(index,"cancelled",undefined,{failureCategory:"cancelled"}); this.abort.abort(); }
   load = (index: number, required = false): Promise<TheatreClip> => {
     if (this.abort.signal.aborted) return Promise.reject(new Error("cancelled"));
     if (this.pending.has(index)) { if(required) this.promote(index); return this.pending.get(index)!; }
     this.attempts.set(index,(this.attempts.get(index)??0)+1);
     this.trace(index,"queued");
     const task = this.slot(index,required).then(async () => {
+      let failureCategory: PreparationFailure = "internal_failure";
+      let httpStatus: number | undefined;
+      let component: number | undefined;
       try {
       this.abort.signal.throwIfAborted();
       const clip = this.clips[index];
@@ -89,31 +95,48 @@ export class IncrementalTheatreLoader {
       for (let componentIndex=0; componentIndex<parts.length; componentIndex++) {
         this.abort.signal.throwIfAborted();
         if (parts[componentIndex].audioBase64) { this.trace(index,"cached",componentIndex); continue; }
+        component = componentIndex;
+        httpStatus = undefined;
+        failureCategory = "internal_failure";
+        const options = {method:"POST",headers:{"Content-Type":"application/json",...this.headers()},
+          body:JSON.stringify({sceneToken:this.manifest.sceneToken,itemId:clip.id,componentIndex,...(this.debug?{debug:true}:{})}),signal:this.abort.signal};
+        failureCategory = "network_failure";
         this.trace(index,"request",componentIndex);
-        const response = await this.fetchAudio("/api/theatre-clip", {method:"POST",headers:{"Content-Type":"application/json",...this.headers()},
-          body:JSON.stringify({sceneToken:this.manifest.sceneToken,itemId:clip.id,componentIndex,...(this.debug?{debug:true}:{})}),signal:this.abort.signal});
-        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex);
+        const response = await this.fetchAudio("/api/theatre-clip", options);
+        httpStatus = response.status;
+        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex,{failureCategory:"stale",httpStatus:response.status});
         this.abort.signal.throwIfAborted();
+        failureCategory = "malformed_response";
         const data = await response.json().catch(()=>null);
-        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex);
+        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex,{failureCategory:"stale",httpStatus:response.status});
         this.abort.signal.throwIfAborted();
         this.captureDelivery(index,componentIndex,data?.debug);
-        if (!response.ok) throw new ClipPreparationError(response.status===429 ? "Préparation temporairement limitée. Patientez, puis réessayez cet élément." : response.status===410 ? "La session de préparation a expiré. Relancez la scène." : "Impossible de préparer cet élément. Réessayez; les passages prêts sont conservés.");
+        if (!response.ok) {
+          failureCategory = response.status === 429 ? "rate_limited" : response.status === 410 ? "ticket_expired" : "http_failure";
+          throw new ClipPreparationError(response.status===429 ? "Préparation temporairement limitée. Patientez, puis réessayez cet élément." : response.status===410 ? "La session de préparation a expiré. Relancez la scène." : "Impossible de préparer cet élément. Réessayez; les passages prêts sont conservés.");
+        }
         this.abort.signal.throwIfAborted();
         if (data?.mode !== "theatre-component" || data.itemId !== clip.id || data.componentIndex !== componentIndex ||
           data.voice !== parts[componentIndex].voice || data.speed !== clip.speed || typeof data.audioBase64 !== "string" ||
           !data.audioBase64 || data.audioBase64.length > 3_500_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.audioBase64)) throw new Error("Audio reçu invalide. Réessayez cet élément.");
+        failureCategory = "internal_failure";
         const validation = await this.validateAudio(data.audioBase64, this.abort.signal);
-        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex);
+        if(this.abort.signal.aborted) this.trace(index,"stale",componentIndex,{failureCategory:"stale",httpStatus:response.status});
         this.abort.signal.throwIfAborted();
         this.trace(index,`validation_${validation.status}`,componentIndex);
-        if(validation.status === "invalid") throw new ClipPreparationError("Audio reçu inutilisable. Réessayez cet élément; les passages prêts sont conservés.");
+        if(validation.status === "invalid") {
+          failureCategory = "validation_invalid";
+          throw new ClipPreparationError("Audio reçu inutilisable. Réessayez cet élément; les passages prêts sont conservés.");
+        }
         parts[componentIndex].audioBase64 = data.audioBase64;
         if (componentIndex===0) clip.audioBase64=data.audioBase64;
         this.trace(index,"prepared",componentIndex);
       }
       return structuredClone(clip);
-      } catch(error) { this.trace(index,"failed"); throw error; }
+      } catch(error) {
+        this.trace(index,"failed",component,{failureCategory:this.abort.signal.aborted ? "cancelled" : failureCategory,httpStatus});
+        throw error;
+      }
       finally { this.release(); }
     });
     this.pending.set(index, task);
