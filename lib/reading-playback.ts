@@ -16,6 +16,7 @@ import type { TheatreResponse } from "./theatre";
 import { theatreRoles } from "./theatre-role-play";
 import type { TheatreRoleRun } from "./theatre-role-play";
 import { ConversationPlayback } from "./conversation-playback";
+import { HeldTurnAssistance } from "./held-turn-assistance";
 
 type ReadingSnapshot = {
   performanceStyle: TheatreStyle;
@@ -33,6 +34,7 @@ type ReadingSnapshot = {
  */
 export class ReadingPlaybackSession {
   readonly theatre: TheatrePlaybackController;
+  readonly roleAssistance: HeldTurnAssistance;
   private lastDebugTrace: unknown = null;
   private roleEpoch = 0;
   exportTheatreDiagnostics = () => {
@@ -88,6 +90,13 @@ export class ReadingPlaybackSession {
       ambience: { environment: "none", level: "off", status:"analysis_unavailable" } };
     this.preparation.subscribe(() => this.update({}));
     this.unsubscribe = this.theatre.subscribe(() => this.update({}));
+    this.roleAssistance = new HeldTurnAssistance(this.theatre, environment, this.beginMicrophoneCapture, async turn => {
+      if (this.theatre.getSnapshot().learnerTurn !== turn || !this.incremental) throw new Error("Inactive turn");
+      const clip = await this.incremental.load(turn.index, true);
+      if (this.theatre.getSnapshot().learnerTurn !== turn || clip.id !== turn.itemId || clip.text !== turn.text)
+        throw new Error("Inactive turn");
+      return clip;
+    });
   }
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -176,7 +185,7 @@ export class ReadingPlaybackSession {
       }
     };
   };
-  dispose() { this.invalidateDocument(); this.unsubscribe(); this.listeners.clear(); this.theatre.dispose(); }
+  dispose() { this.invalidateDocument(); this.roleAssistance.dispose(); this.unsubscribe(); this.listeners.clear(); this.theatre.dispose(); }
 
   /** A new style owns a fresh audio session. Scene analysis is independent and reusable.
    * Restart from the beginning explicitly; never mix an old queue/practice bookmark. */

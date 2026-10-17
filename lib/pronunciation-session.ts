@@ -34,7 +34,11 @@ export type RecordingEnvironment = {
 };
 const browserRecordingEnvironment: RecordingEnvironment = {
   getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: true }),
-  createRecorder: (stream) => new MediaRecorder(stream),
+  createRecorder: (stream) => {
+    const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus", "audio/webm"]
+      .find(type => MediaRecorder.isTypeSupported(type));
+    return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  },
   fetch: (...args) => fetch(...args),
 };
 const emptySnapshot = (): PronunciationSnapshot => ({
@@ -109,12 +113,13 @@ export class PronunciationSession {
       const recorder = this.environment.createRecorder(stream);
       this.recorder = recorder;
       const chunks: BlobPart[] = [];
+      let chunkType = "";
       recorder.ondataavailable = (event) => {
-        if (epoch === this.epoch && event.data.size > 0) chunks.push(event.data);
+        if (epoch === this.epoch && event.data.size > 0) { chunks.push(event.data); chunkType ||= event.data.type; }
       };
       recorder.onstop = () => {
         if (epoch !== this.epoch) return;
-        const blob = new Blob(chunks, { type: "audio/webm" });
+        const blob = new Blob(chunks, { type: recorder.mimeType || chunkType });
         this.releaseRecorder();
         this.update({ status: "recorded", recording: { blob, target: capturedTarget } });
       };
@@ -149,7 +154,8 @@ export class PronunciationSession {
     this.update({ status: "analyzing", error: null });
     const formData = new FormData();
     let failureMessage=requestError(500,"pronunciation"), failureCode: "RATE_LIMITED" | "PROVIDER_FAILED"="PROVIDER_FAILED";
-    formData.append("audio", recording.blob, "reading.webm");
+    const extension = recording.blob.type.includes("mp4") ? "mp4" : recording.blob.type.includes("ogg") ? "ogg" : "webm";
+    formData.append("audio", recording.blob, `reading.${extension}`);
     formData.append("text", recording.target.text);
     if (recording.target.itemId) formData.append("itemId", recording.target.itemId);
     if (recording.target.speaker) formData.append("speaker", recording.target.speaker);

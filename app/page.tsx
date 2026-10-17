@@ -415,7 +415,8 @@ export default function Page() {
         busy={playbackState.busy} playback={playbackState.theatre}
         onEnable={enabled => changeRole(enabled ? roles[0] ?? null : null)} onSpeaker={changeRole}
         onStart={handlePlayAudio} onStop={handleStopPlayback}
-        onContinue={turn => playback.theatre.continueLearner(turn)}
+        assistance={playback.roleAssistance}
+        onContinue={turn => playback.roleAssistance.continue(turn)}
       />}
       {article.contentType === "theatre" && !roleEnabled && playbackState.mode !== "theatre" && <section className="mb-4 rounded-xl border p-4">
         <h2>Lecture théâtrale</h2>
