@@ -2,8 +2,7 @@ import OpenAI from "openai";
 import { protectedRoute, RequestGate, providerCall } from "../../../lib/beta-server";
 import { openScene } from "../../../lib/theatre-scene-ticket";
 import { theatreRole } from "../../../lib/theatre-casting";
-import { dramaticInstructions } from "../../../lib/theatre-direction";
-import { pronunciationInstructions } from "../../../lib/document-language";
+import { theatreSpeechInstructions } from "../../../lib/theatre-speech-instructions";
 import { TTS_INPUT_LIMIT } from "../../../lib/content-document";
 import { semanticPause } from "../../../lib/theatre";
 import { directorDelivery } from "../../../lib/theatre-director";
@@ -28,7 +27,7 @@ async function handlePost(req: Request) {
   if(!voice || item.text.length>TTS_INPUT_LIMIT) return Response.json({code:"INVALID_ITEM"},{status:400});
   const itemSpeed=item.type==="stage"?Math.max(.65,speed-.15):speed;
   const speech = {model:"gpt-4o-mini-tts",voice,input:item.text,speed:itemSpeed,
-    instructions:pronunciationInstructions(language,dramaticInstructions(item,plan.analysis,plan.performanceStyle,{voice,items:plan.items}))};
+    instructions:theatreSpeechInstructions(language,item,plan.analysis,plan.performanceStyle,{voice,items:plan.items})};
   const debug = body.debug === true ? {kind:"speech",item:{id:item.id,index:item.index,speaker:item.speaker,type:item.type},
     componentIndex:body.componentIndex,performanceStyle:plan.performanceStyle,language,
     direction:plan.direction,tts:speech,
