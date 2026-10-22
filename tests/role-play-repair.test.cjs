@@ -17,7 +17,7 @@ for(const style of ['clarte','naturel'])test(`ordinary and role-play final TTS c
  }
  const ordinary=await perform(),role=await perform('THOMAS');assert.equal(ordinary.length,8);assert.equal(role.length,7);
  assert.deepEqual(role,ordinary.filter(b=>b.input!=='Je suis ici.'));
- for(const b of role){assert.match(b.instructions,/conventional French pronunciation/);assert.match(b.instructions,/not all French final consonants are silent/);}
+ for(const b of role){assert.match(b.instructions,/Accepted production pronunciation/);assert.match(b.instructions,/"language":"fr"/);assert.match(b.instructions,/French pronunciation confirmed by fixture owner/);}
  assert.match(role.find(b=>b.input==='Thomas ?').instructions,/interrogative/);
 });
 

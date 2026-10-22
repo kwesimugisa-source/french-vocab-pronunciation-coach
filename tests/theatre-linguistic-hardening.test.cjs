@@ -4,6 +4,7 @@ const {planFor,analysisFor}=require('./director-fixtures.cjs');
 for(const style of ['clarte','naturel'])for(const directed of [false,true])test(`linguistic requests preserve input/casting/speed: ${style}, Director=${directed}`,async()=>{
  const h=harness();const source='JULIEN: Alice !\nJULIEN: Paul ?!\nJULIEN: Euh…\n[Marc entre.]\n[Rose regarde la porte puis traverse lentement la grande salle pour retrouver ses amis.]';
  const plan=await h.load('lib/theatre-generation.ts').prepareTheatrePlan(source,{performanceStyle:style,directorEnabled:directed,...(directed?{analyze:async json=>{const {items}=JSON.parse(json);return {...analysisFor(items),director:planFor(items)};}}:{})});
+ require('./pronunciation-review-fixture.cjs').reviewPlan(h.load,plan);
  const ticket=h.load('lib/theatre-scene-ticket.ts');const m=ticket.sceneManifest(plan,1.1,ticket.sealScene(plan,1.1,'incremental-test-placeholder'));
  for(const item of m.clips){const r=await h.clip(request({sceneToken:m.sceneToken,itemId:item.id,componentIndex:0}));assert.equal(r.status,200);const b=h.stats.calls.at(-1).body;
  assert.equal(b.input,item.text);assert.equal(b.voice,item.voice);assert.equal(b.speed,item.speed);assert.match(b.instructions,/French vowel values/);assert.match(b.instructions,item.type==='stage'?/French-context narration/:/Short French-context utterance/);

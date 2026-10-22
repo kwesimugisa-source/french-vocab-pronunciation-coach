@@ -2,7 +2,7 @@
 // Every byte still passes through the real bounded routes. This helper is NOT
 // the browser transport; incremental lifecycle tests use the raw routes.
 module.exports = function completeReading(load) {
- const prepare=load('app/api/read-passage/route.ts').POST,component=load('app/api/theatre-clip/route.ts').POST;
+ const prepare=require('./pronunciation-review-fixture.cjs').reviewedPrepare(load('app/api/read-passage/route.ts').POST),component=load('app/api/theatre-clip/route.ts').POST;
  return async req=>{
   const response=await prepare(req);if(!response.ok || !response.headers.get('content-type')?.includes('application/json'))return response;
   const data=await response.clone().json();if(data.protocol!=='incremental-v1')return response;

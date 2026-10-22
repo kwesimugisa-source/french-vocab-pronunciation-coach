@@ -1,3 +1,5 @@
+import { PRONUNCIATION_SCHEMA, PRONUNCIATION_PROMPT, validatePronunciationProposal } from "./theatre-pronunciation";
+import type { PronunciationProposal } from "./theatre-pronunciation";
 import { performanceInstructions, TheatreStyle } from "./theatre-performance";
 import { theatreLinguisticGuidance } from "./theatre-linguistic";
 import type OpenAI from "openai";
@@ -29,6 +31,7 @@ export type DramaticAnalysis = {
   version: 1;
   ambience?: AmbienceRecommendation;
   director?: DirectorPlan;
+  pronunciation?: PronunciationProposal;
   scene: { mood: typeof TONES[number]; situation: string; relationships: string; arc: string };
   items: DramaticAnnotation[];
 };
@@ -76,6 +79,11 @@ function member<T extends string>(value: unknown, values: readonly T[]): value i
 export function validateDramaticAnalysis(value: unknown, items: readonly TheatreItem[]): DramaticAnalysis {
   // Director rejection is deliberately independent of the accepted CP3 plan.
   // Malformed new metadata cannot discard valid legacy direction or ambience.
+  let pronunciation: PronunciationProposal | undefined;
+  if(value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value,"pronunciation")) {
+    const {pronunciation:raw,...base}=value as Record<string,unknown>;
+    pronunciation=validatePronunciationProposal(raw,items); value=base;
+  }
   let director: DirectorPlan | undefined;
   if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "director")) {
     const { director: raw, ...base } = value as Record<string, unknown>;
@@ -104,6 +112,7 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
   return {
     version: 1,
     ...(director ? { director } : {}),
+    ...(pronunciation ? { pronunciation } : {}),
     ambience: validateAmbience(value.ambience, items),
     scene: { mood: scene.mood, situation: scene.situation as string, relationships: scene.relationships as string, arc: scene.arc as string },
     items: items.map((item) => annotations.get(item.id)!),
@@ -128,13 +137,13 @@ Ambience is optional BASE environmental sound, never speech, music or one-shot e
 Use basis explicit for a setting directly established by stage directions, citing at least one such item. Use contextual only for strong convergent evidence from at least two distinct items: roles, activity, relationships and the interaction together may establish a place without literally naming it. An administrative service interaction involving client registration, employment records and procedural questioning can establish an office; a character title alone cannot. Do not hard-code any play or character name. Outdoors alone does not establish birds. Discussing a place, remembering it or wishing for weather does not establish the current environment.
 When you confidently determine no ambience is appropriate, use environment none, confidence high, empty evidence and a short rationale. Distinguish this from unavailable/uncertain evidence, which uses confidence uncertain.
 If the input includes ambienceDecision, it is a previously validated decision for this unchanged scene. Copy it unchanged and do not reclassify the environment; analyze only the dramatic direction.
-Return exact evidence excerpts (at most 400 characters each), their stable item IDs, and a short rationale explaining why the evidence establishes the current place. Never invent evidence. Weak, ambiguous or low-confidence scenes mean none with uncertain confidence and empty evidence. Provider availability must not influence semantic classification; an identified environment may have no available sound.${includeDirector ? DIRECTOR_PROMPT : ""}` },
+Return exact evidence excerpts (at most 400 characters each), their stable item IDs, and a short rationale explaining why the evidence establishes the current place. Never invent evidence. Weak, ambiguous or low-confidence scenes mean none with uncertain confidence and empty evidence. Provider availability must not influence semantic classification; an identified environment may have no available sound.${includeDirector ? DIRECTOR_PROMPT : ""} ${PRONUNCIATION_PROMPT}` },
       { role: "user", content: sceneJson },
     ],
     text: { format: { type: "json_schema", name: "theatre_direction", strict: true, schema: includeDirector ? {
-      ...DRAMATIC_ANALYSIS_SCHEMA, required: [...DRAMATIC_ANALYSIS_SCHEMA.required, "director"],
-      properties: { ...DRAMATIC_ANALYSIS_SCHEMA.properties, director: DIRECTOR_SCHEMA },
-    } : DRAMATIC_ANALYSIS_SCHEMA } },
+      ...DRAMATIC_ANALYSIS_SCHEMA, required: [...DRAMATIC_ANALYSIS_SCHEMA.required, "director", "pronunciation"],
+      properties: { ...DRAMATIC_ANALYSIS_SCHEMA.properties, director: DIRECTOR_SCHEMA, pronunciation: PRONUNCIATION_SCHEMA },
+    } : {...DRAMATIC_ANALYSIS_SCHEMA,required:[...DRAMATIC_ANALYSIS_SCHEMA.required,"pronunciation"],properties:{...DRAMATIC_ANALYSIS_SCHEMA.properties,pronunciation:PRONUNCIATION_SCHEMA}} } },
   }, { signal, timeout: ANALYSIS_TIMEOUT_MS, maxRetries: 0 }));
   if (response.status !== "completed") throw new AnalysisFailure("incomplete_response");
   try { return JSON.parse(response.output_text); }
@@ -153,7 +162,7 @@ export async function prepareDramaticDirection(
   if (!analyzer) return fallback("unavailable");
   // Pass an immutable serialization rather than references to source items.
   const includeDirector = !!directorInput && withinDirectorBudget(items);
-  const sceneJson = JSON.stringify({ items, ...(ambienceDecision ? { ambienceDecision } : {}),
+  const sceneJson = JSON.stringify({ items, documentLanguageHint: "fr", ...(ambienceDecision ? { ambienceDecision } : {}),
     ...(directorInput ? { directorRequested: includeDirector, characters: directorInput.characters } : {}) });
   const maxOutputTokens = includeDirector ? 4096 + items.length * 512 : 2048 + items.length * 192;
   if (new TextEncoder().encode(sceneJson).length > ANALYSIS_INPUT_BYTES) return fallback("input_budget");

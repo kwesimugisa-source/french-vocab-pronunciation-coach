@@ -5,7 +5,7 @@ import { validateTheatreAudio } from "./theatre-audio-validation";
 
 export class ClipPreparationError extends Error {}
 
-export type TheatreManifest = TheatreResponse & { protocol: "incremental-v1"; sceneToken: string };
+export type TheatreManifest = TheatreResponse & { protocol: "incremental-v1"; sceneToken: string; pronunciationDigest?: string };
 export function assertTheatreManifest(value: unknown, source: string): asserts value is TheatreManifest {
   const data = value as TheatreManifest;
   if (!data || data.protocol !== "incremental-v1" || typeof data.sceneToken !== "string" ||
@@ -41,7 +41,7 @@ export class IncrementalTheatreLoader {
     // Server constructs this allowlisted object. Never retain the response/audio/token.
     const d=value as Record<string,unknown>;
     const safe={capture:{session:this.session,attempt:this.attempts.get(index)??0,index,component},kind:d.kind,item:d.item,componentIndex:d.componentIndex,performanceStyle:d.performanceStyle,language:d.language,
-      direction:d.direction,tts:d.tts,director:d.director,requestOutcome:d.requestOutcome,provenance:d.provenance};
+      direction:d.direction,pronunciation:d.pronunciation,tts:d.tts,director:d.director,requestOutcome:d.requestOutcome,provenance:d.provenance};
     const bytes=JSON.stringify(safe).length;
     if(bytes>32_000) return;
     const key=`${index}:${component}`;
@@ -116,7 +116,7 @@ export class IncrementalTheatreLoader {
           throw new ClipPreparationError(response.status===429 ? "Préparation temporairement limitée. Patientez, puis réessayez cet élément." : response.status===410 ? "La session de préparation a expiré. Relancez la scène." : "Impossible de préparer cet élément. Réessayez; les passages prêts sont conservés.");
         }
         this.abort.signal.throwIfAborted();
-        if (data?.mode !== "theatre-component" || data.itemId !== clip.id || data.componentIndex !== componentIndex ||
+        if ((this.manifest.pronunciationDigest && data?.pronunciationDigest !== this.manifest.pronunciationDigest) || data?.mode !== "theatre-component" || data.itemId !== clip.id || data.componentIndex !== componentIndex ||
           data.voice !== parts[componentIndex].voice || data.speed !== clip.speed || typeof data.audioBase64 !== "string" ||
           !data.audioBase64 || data.audioBase64.length > 3_500_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.audioBase64)) throw new Error("Audio reçu invalide. Réessayez cet élément.");
         failureCategory = "internal_failure";

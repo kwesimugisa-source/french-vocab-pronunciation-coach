@@ -21,6 +21,7 @@ import ArticleHeader from "@/components/article-reader/ArticleHeader";
 import ArticleTextPanel from "@/components/article-reader/ArticleTextPanel";
 import ReadingControls from "@/components/article-reader/ReadingControls";
 import ReadingSetupBar from "@/components/article-reader/ReadingSetupBar";
+import PronunciationClarification from "@/components/article-reader/PronunciationClarification";
 import RolePlayControls from "@/components/article-reader/RolePlayControls";
 import { theatreRoles } from "@/lib/theatre-role-play";
 import TheatreControls from "@/components/article-reader/TheatreControls";
@@ -409,6 +410,9 @@ export default function Page() {
         onStopAudio={handleStopPlayback} onRecord={handleStartReading}
         onStopRecording={handleStopReading} onAnalyze={handleAnalyzePronunciation}
       />}
+      {playbackState.clarification && <PronunciationClarification key={JSON.stringify(playbackState.clarification)} state={playbackState.clarification} busy={playbackState.busy}
+        onAccept={(entries,reviewed,excludedIds)=>void playback.resolvePronunciation(playbackState.clarification!,entries,reviewed,excludedIds)} onCancel={()=>playback.stop()} />}
+      {(playbackState.error || playbackState.theatre.error) && article.contentType==="theatre" && <button className="mb-3 min-h-11 rounded border p-2" onClick={()=>playback.clearPronunciationAuthority()}>Recommencer la préparation des noms</button>}
       {playbackState.error && <p role="alert" className="mb-4 text-sm text-red-700">{playbackState.error}</p>}
       {article.contentType === "theatre" && <RolePlayControls
         enabled={roleEnabled} roles={roles} speaker={learnerSpeaker} disabled={recordingBusy || isGenerating}

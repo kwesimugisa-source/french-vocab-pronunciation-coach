@@ -9,6 +9,7 @@ async function manifest(h,text,intent='respond') {
  const plan=await prepareTheatrePlan(text,{performanceStyle:'naturel',directorEnabled:true,analyze:async json=>{
   const {items}=JSON.parse(json),director=planFor(items);director.lines.forEach(l=>l.intent=intent);return {...analysisFor(items),director};
  }});
+ require('./pronunciation-review-fixture.cjs').reviewPlan(h.load,plan);
  return h.load('lib/theatre-scene-ticket.ts').sceneManifest(plan,1,h.load('lib/theatre-scene-ticket.ts').sealScene(plan,1,'incremental-test-placeholder'));
 }
 for(const intent of ['question','respond','unknown'])test(`authored question guard survives Director intent ${intent} in actual TTS request and debug`,async()=>{
@@ -69,10 +70,10 @@ test('cancelled and late preparation is diagnosed without attaching old audio',a
 });
 test('diagnostic storage is bounded and excludes arbitrary top-level response fields',async()=>{
  const h=harness(),m=await manifest(h,'JULIEN: Thomas ?'),clip=m.clips[0];
- const loader=new (h.load('lib/theatre-incremental.ts').IncrementalTheatreLoader)(m,async()=>Response.json({mode:'theatre-component',itemId:clip.id,componentIndex:0,voice:clip.voice,speed:clip.speed,audioBase64:'YQ==',debug:{tts:{input:clip.text},secret:'PRIVATE',sceneToken:'PRIVATE'}}),()=>({}),1,true);
+ const loader=new (h.load('lib/theatre-incremental.ts').IncrementalTheatreLoader)(m,async()=>Response.json({pronunciationDigest:m.pronunciationDigest,mode:'theatre-component',itemId:clip.id,componentIndex:0,voice:clip.voice,speed:clip.speed,audioBase64:'YQ==',debug:{tts:{input:clip.text},secret:'PRIVATE',sceneToken:'PRIVATE'}}),()=>({}),1,true);
  for(let i=0;i<1100;i++)await loader.load(0);assert.ok(loader.getDiagnostics().length<=1024);assert.doesNotMatch(JSON.stringify(loader.getDelivery(0)),/PRIVATE/);
  // Oversized selected-item metadata is discarded rather than expanding capture.
- const huge=new (h.load('lib/theatre-incremental.ts').IncrementalTheatreLoader)(m,async()=>Response.json({mode:'theatre-component',itemId:clip.id,componentIndex:0,voice:clip.voice,speed:clip.speed,audioBase64:'YQ==',debug:{tts:{instructions:'x'.repeat(33000)}}}),()=>({}),1,true);
+ const huge=new (h.load('lib/theatre-incremental.ts').IncrementalTheatreLoader)(m,async()=>Response.json({pronunciationDigest:m.pronunciationDigest,mode:'theatre-component',itemId:clip.id,componentIndex:0,voice:clip.voice,speed:clip.speed,audioBase64:'YQ==',debug:{tts:{instructions:'x'.repeat(33000)}}}),()=>({}),1,true);
  await huge.load(0);assert.equal(huge.getDelivery(0),null);loader.dispose();huge.dispose();h.session.dispose();
 });
 test('debug UI is absent until explicitly enabled; scheduler constants remain six/two',()=>{

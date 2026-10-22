@@ -1,3 +1,6 @@
+import type { PronunciationAuthority } from "./theatre-pronunciation";
+import { assertPronunciationAuthority, pronunciationSourceDigest } from "./theatre-pronunciation-authority";
+import { theatreSpeechInstructions } from "./theatre-speech-instructions";
 import { theatreStyle } from "./theatre-performance";
 import { assertCompleteTheatreResponse, parseTheatreItems } from "./theatre";
 import type { TheatreClip, TheatreItem, TheatreResponse } from "./theatre";
@@ -29,7 +32,7 @@ export class TheatreGenerationError extends Error {
   }
 }
 
-export type TheatreGenerationOptions = { performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number };
+export type TheatreGenerationOptions = { pronunciationAuthority?: PronunciationAuthority; requirePronunciationAuthority?: boolean; performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number };
 
 export async function prepareTheatrePlan(text: string, options: TheatreGenerationOptions = {}) {
   const performanceStyle = theatreStyle(options.performanceStyle);
@@ -38,9 +41,9 @@ export async function prepareTheatrePlan(text: string, options: TheatreGeneratio
   const casting = createTheatreCasting(items, options.narratorVoice, metadata);
   // Speed and delivery style do not reinterpret the scene. Canonical source,
   // revision, generated identity labels and Director version do bind reuse.
-  const cacheScope = options.directorEnabled ? JSON.stringify({ directorVersion: 1,
+  const cacheScope = JSON.stringify({ directorVersion: options.directorEnabled ? 1 : 0, pronunciationVersion: 2,
     documentId: options.documentId ?? null, revision: options.revision ?? null,
-    characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) }) : "";
+    characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) });
   const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text, cacheScope);
   const prior = validateAmbience(options.ambienceDecision, items);
   const ambienceDecision = prior.confidence === "high" ? prior : undefined;
@@ -53,7 +56,7 @@ export async function prepareTheatrePlan(text: string, options: TheatreGeneratio
     reason: performanceStyle === "clarte" || analysis?.director ? null : !analysis ? "analysis_unavailable" : !withinDirectorBudget(items) ? "plan_budget" : "invalid_or_missing_plan",
     directedItemCount: performanceStyle === "naturel" ? analysis?.director?.lines.length ?? 0 : 0,
   };
-  return { items, casting, analysis, direction, performanceStyle,
+  return { items, casting, analysis, direction, performanceStyle, pronunciationCharacters:metadata.map(({speakerId,displayName})=>({speakerId,displayName})), pronunciation: undefined as PronunciationAuthority | undefined,
     analysisCacheKey: analysis ? theatreAnalysisCache.put(text, analysis, cacheScope) : undefined,
     ambience: ambienceDecision ?? analysis?.ambience ?? noAmbience() };
 }
@@ -64,13 +67,20 @@ export async function generateTheatreResponse(
   options: TheatreGenerationOptions = {}
 ): Promise<TheatreResponse> {
   const plan = await prepareTheatrePlan(text, options);
+  // This legacy batch helper is not a public route. Authority-bearing plans
+  // must use the same adapter, and may never silently fall back to old guidance.
+  if(options.pronunciationAuthority || options.requirePronunciationAuthority || plan.analysis?.pronunciation) {
+    plan.pronunciation=options.pronunciationAuthority;
+    assertPronunciationAuthority(plan);
+    if(plan.pronunciation!.sourceDigest!==pronunciationSourceDigest(text,options.documentId,options.revision,options.theatreCharacters)) throw new Error("Pronunciation source mismatch");
+  }
   const { items, casting, analysis, direction, performanceStyle } = plan;
   // Casting and complete validated direction are fixed before concurrent TTS.
   const jobs = items.filter(item=>!item.pauseMs).flatMap((item) => (theatreRole(item) === "chorus" ? casting.chorus.voices :
     [casting.members.find((member) => member.speaker === item.speaker && member.role === theatreRole(item))!.voice]).map((voice, componentIndex) => ({
     item,
     voice, componentIndex,
-    instructions: dramaticInstructions(item, analysis, performanceStyle, {voice, items}),
+    instructions: plan.pronunciation ? theatreSpeechInstructions("fr",item,analysis,performanceStyle,{voice,items,pronunciation:plan.pronunciation}) : dramaticInstructions(item, analysis, performanceStyle, {voice, items}),
     speed: item.type === "stage" ? Math.max(0.65, playbackSpeed - 0.15) : playbackSpeed,
   })));
   const components: { voice: string; audioBase64: string }[][] = items.map(() => []);

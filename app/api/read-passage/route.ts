@@ -1,10 +1,11 @@
-import { sealScene, sceneManifest } from "../../../lib/theatre-scene-ticket";
+import { draftPronunciation, acceptPronunciation, pronunciationSourceDigest } from "../../../lib/theatre-pronunciation-authority";
+import { openScene, sealScene, sceneManifest } from "../../../lib/theatre-scene-ticket";
 import { theatreStyle } from "../../../lib/theatre-performance";
 import OpenAI from "openai";
 import { documentLanguage, DocumentLanguage, pronunciationInstructions } from "../../../lib/document-language";
 import { protectedRoute, providerCall } from "../../../lib/beta-server";
 import { prepareTheatrePlan, TheatreGenerationError } from "../../../lib/theatre-generation";
-import { requestDramaticAnalysis } from "../../../lib/theatre-direction";
+import { requestDramaticAnalysis, withinDirectorBudget } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
 import { generateConversation, CONVERSATION_INSTRUCTIONS } from "../../../lib/conversation-generation";
 import { conversationTurns, conversationVoices } from "../../../lib/conversation";
@@ -117,11 +118,31 @@ async function handlePost(req: Request) {
       let performanceStyle;
       try { performanceStyle = theatreStyle(body.performanceStyle); }
       catch { return new Response("Style théâtral invalide.", {status:400}); }
-      const plan = await prepareTheatrePlan(text,
+      const sourceDigest=pronunciationSourceDigest(text,body.documentId,body.revision,theatreCharacters);
+      let priorPlan;
+      if(body.pronunciationToken !== undefined) {
+        try {
+          priorPlan=openScene(body.pronunciationToken,apiKey).plan;
+          if(priorPlan.pronunciation?.policyVersion!==2 || priorPlan.pronunciation.sourceDigest!==sourceDigest) throw new Error("Source mismatch");
+        } catch { return Response.json({code:"PRONUNCIATION_EXPIRED",error:"La préparation a expiré ou le texte a changé. Recommencez explicitement la préparation."},{status:410}); }
+      }
+      const plan = priorPlan ? {...priorPlan,performanceStyle,direction:{...priorPlan.direction,
+        director:{version:1 as const,status:performanceStyle==="clarte"?"not_applied" as const:priorPlan.analysis?.director?"applied" as const:"fallback" as const,
+        reason:performanceStyle==="clarte"||priorPlan.analysis?.director?null:!priorPlan.analysis?"analysis_unavailable" as const:!withinDirectorBudget(priorPlan.items)?"plan_budget" as const:"invalid_or_missing_plan" as const,
+        directedItemCount:performanceStyle==="naturel"?priorPlan.analysis?.director?.lines.length??0:0}}} : await prepareTheatrePlan(text,
         { performanceStyle, theatreCharacters, directorEnabled: true, documentId: body.documentId, revision: body.revision,
           analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, AbortSignal.any([signal, req.signal]), maxOutputTokens, true), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       req.signal.throwIfAborted();
+      plan.pronunciation ??= draftPronunciation(plan,sourceDigest);
+      if(body.pronunciationAnswer !== undefined) {
+        if(!priorPlan || plan.pronunciation.status!=="needs-clarification") return Response.json({code:"INVALID_PRONUNCIATION_ANSWER"},{status:400});
+        try { plan.pronunciation=acceptPronunciation(plan.pronunciation,body.pronunciationAnswer,plan); }
+        catch { return Response.json({code:"INVALID_PRONUNCIATION_ANSWER",error:"Vérifiez les noms, leurs langues et leurs prononciations. Les décisions incertaines ne peuvent pas être acceptées."},{status:400}); }
+      }
+      if(plan.pronunciation.status!=="ready") return Response.json({mode:"pronunciation-clarification",performanceStyle,
+        pronunciationToken:sealScene(plan,playbackSpeed,apiKey),entries:plan.pronunciation.entries.filter(e=>!plan.pronunciation!.automaticIds.includes(e.id)),
+        inventoryComplete:plan.analysis?.pronunciation?.context?.inventoryComplete===true}, {headers:{"Cache-Control":"no-store"}});
       return Response.json(sceneManifest(plan, playbackSpeed, sealScene(plan, playbackSpeed, apiKey)), {headers:{"Cache-Control":"no-store"}});
     }
     if (text.length > TTS_INPUT_LIMIT) return new Response(

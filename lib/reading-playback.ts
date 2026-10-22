@@ -1,3 +1,4 @@
+import type { PronunciationEntry } from "./theatre-pronunciation";
 import { IncrementalTheatreLoader, assertTheatreManifest } from "./theatre-incremental";
 import { theatreStyle, TheatreStyle } from "./theatre-performance";
 import { documentLanguage } from "./document-language";
@@ -18,7 +19,9 @@ import type { TheatreRoleRun } from "./theatre-role-play";
 import { ConversationPlayback } from "./conversation-playback";
 import { HeldTurnAssistance } from "./held-turn-assistance";
 
+export type PronunciationClarification = { entries: PronunciationEntry[]; inventoryComplete: boolean; excludedIds?: string[] };
 type ReadingSnapshot = {
+  clarification: PronunciationClarification | null;
   performanceStyle: TheatreStyle;
   mode: "pending" | "theatre" | "ordinary" | "conversation" | null;
   busy: boolean;
@@ -37,6 +40,15 @@ export class ReadingPlaybackSession {
   readonly roleAssistance: HeldTurnAssistance;
   private lastDebugTrace: unknown = null;
   private roleEpoch = 0;
+  private pronunciationAuthority: {key:string;token:string} | null = null;
+  private pendingClarification: {state:PronunciationClarification;text:string;speed:string;identity?:ContentIdentity;learnerSpeaker?:string} | null = null;
+  async resolvePronunciation(state:PronunciationClarification,entries:PronunciationEntry[],inventoryReviewed:boolean,excludedIds:string[] = []) {
+    const pending=this.pendingClarification;
+    if(!pending || pending.state!==state || this.snapshot.clarification!==state || this.snapshot.busy) return;
+    await this.start(pending.text,pending.speed,pending.identity,undefined,pending.learnerSpeaker,{entries,inventoryReviewed,excludedIds});
+  }
+  clearPronunciationAuthority() { this.stop(); this.pronunciationAuthority=null; }
+
   exportTheatreDiagnostics = () => {
     const snapshot=this.theatre.getSnapshot();
     if(!snapshot.queue.length) return this.lastDebugTrace;
@@ -86,7 +98,7 @@ export class ReadingPlaybackSession {
       if(this.snapshot.ambience.status==="playback_failed") this.update({ambience:{...this.snapshot.ambience,status:"detected_available"}});
     });
     this.conversation = new ConversationPlayback(environment, () => this.update({ error: this.conversation.getSnapshot().error }));
-    this.snapshot = { performanceStyle: "clarte", mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null, preparation:null, conversationPreparing:false,
+    this.snapshot = { clarification:null, performanceStyle: "clarte", mode: null, busy: false, theatre: this.theatre.getSnapshot(), error: null, preparation:null, conversationPreparing:false,
       ambience: { environment: "none", level: "off", status:"analysis_unavailable" } };
     this.preparation.subscribe(() => this.update({}));
     this.unsubscribe = this.theatre.subscribe(() => this.update({}));
@@ -128,7 +140,7 @@ export class ReadingPlaybackSession {
     betaJournal.emit({...run.context,name:"playback",status,durationMs:Math.max(0,Date.now()-run.since),...(logicalItems!==undefined?{logicalItems}:{}),...(status==="failed"?{code:"PLAYBACK_FAILED" as const}:{})});
     if (["completed","failed","cancelled"].includes(status)) this.lifecycle=null;
   }
-  invalidateDocument() { this.stop(); this.analysisCache=null; }
+  invalidateDocument() { this.stop(); this.analysisCache=null; this.pronunciationAuthority=null; }
   private releaseOrdinary() {
     if (this.ordinary) {
       this.ordinary.onended = this.ordinary.onerror = null;
@@ -141,6 +153,7 @@ export class ReadingPlaybackSession {
     this.ordinaryUrl = null;
   }
   stop() {
+    this.pendingClarification=null;
     this.roleEpoch++;
     this.incremental?.dispose();
     if(this.theatre.getSnapshot().queue.length) {
@@ -157,7 +170,7 @@ export class ReadingPlaybackSession {
     this.releaseOrdinary();
     this.ambience.stop();
     this.theatre.stop();
-    this.update({ mode: null, error: null, ambience: { ...this.snapshot.ambience, environment: "none" } });
+    this.update({ clarification:null, mode: null, error: null, ambience: { ...this.snapshot.ambience, environment: "none" } });
   }
   setAmbienceLevel(level: AmbienceLevel) {
     if (!["off", "low", "medium"].includes(level)) return;
@@ -198,8 +211,9 @@ export class ReadingPlaybackSession {
     if (restart) await this.start(text, speed, identity);
   }
 
-  async start(text: string, speed: string, identity?: ContentIdentity, conversationTurnId?: string, learnerSpeaker?: string) {
+  async start(text: string, speed: string, identity?: ContentIdentity, conversationTurnId?: string, learnerSpeaker?: string, pronunciationAnswer?: {entries:PronunciationEntry[];inventoryReviewed:boolean;excludedIds?:string[]}) {
     if (this.snapshot.busy || this.captures) return;
+    const clarificationRetry=this.pendingClarification;
     this.stop();
     if (identity) {
       try { validateIdentity(identity); } catch { this.update({ error: "Identité du document invalide." }); return; }
@@ -216,6 +230,9 @@ export class ReadingPlaybackSession {
     const preparationId=this.preparation.begin("reading",context);
     const key=identity ? `${identity.documentId}:${identity.revision}:${text}` : "";
     if (this.analysisCache?.key !== key) this.analysisCache=null;
+    const authorityKey=JSON.stringify([text,identity?.documentId,identity?.revision,identity?.contentType,language,identity?.theatreCharacters??[]]);
+    if(this.pronunciationAuthority?.key!==authorityKey) this.pronunciationAuthority=null;
+    const authority=this.pronunciationAuthority;
     const cached=identity?.contentType === "theatre" ? this.analysisCache : null;
     this.update({ mode: "pending", error: null });
     this.conversationRequest = identity?.contentType === "conversation" && !conversationTurnId;
@@ -231,12 +248,17 @@ export class ReadingPlaybackSession {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
           method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders() },
-          body: JSON.stringify({ text, speed, language, ...(conversationTurnId ? { conversationTurnId } : {}), ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.reference || cached?.ambience ? {analysisCacheKey:cached.reference,...(cached.ambience ? {ambienceDecision:cached.ambience} : {})} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
+          body: JSON.stringify({ text, speed, language, ...(authority?{pronunciationToken:authority.token}:{}),...(pronunciationAnswer?{pronunciationAnswer}:{}), ...(conversationTurnId ? { conversationTurnId } : {}), ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.reference || cached?.ambience ? {analysisCacheKey:cached.reference,...(cached.ambience ? {ambienceDecision:cached.ambience} : {})} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
         if (!current()) return;
         if (!response.ok) {
           if(response.status===429) failureCode="RATE_LIMITED";
           failureMessage = requestError(response.status,"reading");
+          if(authority) {
+            const problem=await response.clone().json().catch(()=>null);
+            if(problem?.code==="INVALID_PRONUNCIATION_ANSWER") failureMessage="Vérifiez les noms, les langues et les indications. Résolvez les décisions incertaines ou excluez explicitement les propositions incorrectes.";
+            if(problem?.code==="PRONUNCIATION_EXPIRED") failureMessage="La préparation des noms a expiré ou le texte a changé. Recommencez explicitement cette préparation.";
+          }
           throw new Error(failureMessage);
         }
         if ((response.headers.get("Content-Type") || "").includes("application/json")) {
@@ -252,11 +274,21 @@ export class ReadingPlaybackSession {
             throw new Error("Le mode audio reçu ne correspond pas au texte.");
           const data: unknown = await response.json();
           if (!current()) return;
+          const clarification=data as {mode?:string;entries?:PronunciationEntry[];inventoryComplete?:boolean;pronunciationToken?:string};
+          if(clarification.mode==="pronunciation-clarification") {
+            if(!Array.isArray(clarification.entries)||typeof clarification.pronunciationToken!=="string") throw new Error("Invalid clarification");
+            const state={entries:clarification.entries,inventoryComplete:clarification.inventoryComplete===true};
+            this.pronunciationAuthority={key:authorityKey,token:clarification.pronunciationToken};
+            this.pendingClarification={state,text,speed,identity,learnerSpeaker};
+            this.theatre.stop(); this.preparation.finish(preparationId,"completed");
+            this.update({mode:"theatre",clarification:state});return;
+          }
           const scene = data as TheatreResponse;
           if (theatreStyle(scene.performanceStyle) !== performanceStyle)
             throw new Error("Le style audio reçu ne correspond pas au style demandé.");
           if ((data as {protocol?:unknown})?.protocol === "incremental-v1") {
             assertTheatreManifest(data,text);
+            this.pronunciationAuthority={key:authorityKey,token:data.sceneToken};
             this.incremental=new IncrementalTheatreLoader(data,this.fetchAudio,betaHeaders,sessionId!,
               typeof window!=="undefined" && new URLSearchParams(window.location.search).get("theatreDebug")==="1");
             this.theatre.acceptIncremental(sessionId!,data,text,this.incremental.load,roleRun);
@@ -302,6 +334,11 @@ export class ReadingPlaybackSession {
         this.preparation.finish(preparationId,"failed",failureCode); this.playbackEvent("failed");
         this.releaseOrdinary();
         if (sessionId !== null) this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");
+        if(pronunciationAnswer && clarificationRetry) {
+          const state={...clarificationRetry.state,entries:[...pronunciationAnswer.entries,...clarificationRetry.state.entries.filter(e=>pronunciationAnswer.excludedIds?.includes(e.id))],excludedIds:pronunciationAnswer.excludedIds};
+          this.pendingClarification={...clarificationRetry,state};
+          this.update({clarification:state});
+        }
         this.update({ error: failureMessage });
       } finally {
         if (this.request === request) { this.request = null; this.conversationRequest = false; this.update({}); }

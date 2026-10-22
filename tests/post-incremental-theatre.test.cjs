@@ -115,6 +115,7 @@ test('two client requests admitted, third bounded; ordinary duplicate guard unch
 test('a pre-repair scene token cannot send semantic silence to TTS',async()=>{
  const h=harness(),{prepareTheatrePlan}=h.load('lib/theatre-generation.ts'),{sealScene}=h.load('lib/theatre-scene-ticket.ts');
  const plan=await prepareTheatrePlan('[Silence.]\nJULIEN: Oh.');delete plan.items[0].pauseMs;
+ require('./pronunciation-review-fixture.cjs').reviewPlan(h.load,plan);
  const sceneToken=sealScene(plan,1,'incremental-test-placeholder');const response=await h.clip(request({sceneToken,itemId:plan.items[0].id,componentIndex:0}));
  assert.equal(response.status,400);assert.equal(h.stats.calls.length,0);h.session.dispose();
 });

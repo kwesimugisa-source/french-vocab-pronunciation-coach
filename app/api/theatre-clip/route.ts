@@ -1,3 +1,4 @@
+import { assertPronunciationAuthority } from "../../../lib/theatre-pronunciation-authority";
 import OpenAI from "openai";
 import { protectedRoute, RequestGate, providerCall } from "../../../lib/beta-server";
 import { openScene } from "../../../lib/theatre-scene-ticket";
@@ -19,6 +20,7 @@ async function handlePost(req: Request) {
   try { ticket=openScene(body?.sceneToken,secret); }
   catch { return Response.json({code:"SCENE_EXPIRED"},{status:410}); }
   const {plan,speed,language}=ticket;
+  try { assertPronunciationAuthority(plan); } catch { return Response.json({code:"PRONUNCIATION_REQUIRED"},{status:409}); }
   const item=plan.items.find(i=>i.id===body.itemId);
   // Also reject semantic silence in a still-valid token issued before this repair.
   if(!item || item.pauseMs || (item.type==="stage" && semanticPause(item.text)) || !Number.isInteger(body.componentIndex)) return Response.json({code:"INVALID_ITEM"},{status:400});
@@ -27,10 +29,11 @@ async function handlePost(req: Request) {
   if(!voice || item.text.length>TTS_INPUT_LIMIT) return Response.json({code:"INVALID_ITEM"},{status:400});
   const itemSpeed=item.type==="stage"?Math.max(.65,speed-.15):speed;
   const speech = {model:"gpt-4o-mini-tts",voice,input:item.text,speed:itemSpeed,
-    instructions:theatreSpeechInstructions(language,item,plan.analysis,plan.performanceStyle,{voice,items:plan.items})};
+    instructions:theatreSpeechInstructions(language,item,plan.analysis,plan.performanceStyle,{voice,items:plan.items,pronunciation:plan.pronunciation})};
   const debug = body.debug === true ? {kind:"speech",item:{id:item.id,index:item.index,speaker:item.speaker,type:item.type},
     componentIndex:body.componentIndex,performanceStyle:plan.performanceStyle,language,
     direction:plan.direction,tts:speech,
+    pronunciation:{productionLanguage:plan.pronunciation!.productionLanguage,version:plan.pronunciation!.version,policyVersion:plan.pronunciation!.policyVersion,revision:plan.pronunciation!.revision,digest:plan.pronunciation!.digest,acceptance:plan.pronunciation!.acceptance},
     director:plan.performanceStyle==="naturel" && plan.analysis?.director ? directorDelivery(item,plan.analysis.director,plan.items) : null,
     requestOutcome:{sdkInvoked:false,audioReceived:false,providerStatus:null as number|null},
     provenance:"exact constructed request; see requestOutcome for invocation/result; not proof of audible words"} : undefined;
@@ -44,7 +47,7 @@ async function handlePost(req: Request) {
     req.signal.throwIfAborted();
     // Stay below the host response-body ceiling even for a very long utterance.
     if(!buffer.length || buffer.length>2_500_000) return Response.json({code:"AUDIO_SIZE_LIMIT",...(debug?{debug}:{})},{status:413,headers:{"Cache-Control":"no-store"}});
-    return Response.json({mode:"theatre-component",itemId:item.id,componentIndex:body.componentIndex,voice,speed:itemSpeed,audioBase64:buffer.toString("base64"),...(debug?{debug}:{})},{headers:{"Cache-Control":"no-store"}});
+    return Response.json({pronunciationDigest:plan.pronunciation!.digest,mode:"theatre-component",itemId:item.id,componentIndex:body.componentIndex,voice,speed:itemSpeed,audioBase64:buffer.toString("base64"),...(debug?{debug}:{})},{headers:{"Cache-Control":"no-store"}});
   } catch(error) {
     const status=(error as {status?:unknown})?.status;
     if(debug) debug.requestOutcome.providerStatus=typeof status==="number" && Number.isInteger(status) && status>=100 && status<=599 ? status : null;

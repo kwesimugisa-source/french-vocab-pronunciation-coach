@@ -176,7 +176,7 @@ test("SDK request uses strict Responses schema with complete input, disabled tru
   assert.equal(body.store, false); assert.equal(body.truncation, "disabled");
   assert.deepEqual(body.reasoning, { effort: "none" });
   assert.equal(body.max_output_tokens, 10000);
-  assert.deepEqual(body.text.format, { type: "json_schema", name: "theatre_direction", strict: true, schema: DRAMATIC_ANALYSIS_SCHEMA });
+  assert.deepEqual(body.text.format, { type: "json_schema", name: "theatre_direction", strict: true, schema: {...DRAMATIC_ANALYSIS_SCHEMA,required:[...DRAMATIC_ANALYSIS_SCHEMA.required,"pronunciation"],properties:{...DRAMATIC_ANALYSIS_SCHEMA.properties,pronunciation:load("lib/theatre-pronunciation.ts").PRONUNCIATION_SCHEMA}} });
   assert.equal(options.signal, abort.signal); assert.equal(options.maxRetries, 0); assert.equal(options.timeout, 20000);
 });
 

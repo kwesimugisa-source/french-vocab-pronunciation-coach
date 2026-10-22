@@ -11,11 +11,11 @@ function harness(speech){
  const scope=new AsyncLocalStorage();
  const stats={analyses:0,analysisInputs:[],calls:[],requests:[],active:0,peak:0};
  class OpenAI{constructor(){this.responses={create:async b=>{stats.analyses++;stats.analysisInputs.push(b);const {items}=JSON.parse(b.input[1].content);return {status:'completed',output_text:JSON.stringify({...analysisFor(items),director:planFor(items)})};}};this.audio={speech:{create:async(b,o)=>{if(scope.getStore()) scope.getStore().count++;stats.calls.push({body:b,options:o});stats.active++;stats.peak=Math.max(stats.peak,stats.active);try{return speech?await speech(b,o,stats):{arrayBuffer:async()=>Buffer.from(b.input)};}finally{stats.active--;}}}};}}
- const load=createLoader({openai:OpenAI}),prepare=load('app/api/read-passage/route.ts').POST,clip=load('app/api/theatre-clip/route.ts').POST;
+ const load=createLoader({openai:OpenAI}),rawPrepare=load('app/api/read-passage/route.ts').POST,prepare=require('./pronunciation-review-fixture.cjs').reviewedPrepare(rawPrepare),clip=load('app/api/theatre-clip/route.ts').POST;
  const fetcher=async(url,options)=>{const entry={url,count:0};stats.requests.push(entry);const response=await scope.run(entry,()=> (url.includes('theatre-clip')?clip:prepare)(new Request('http://localhost'+url,options)));entry.status=response.status;return response;};
  const env=environment(),session=new (load('lib/reading-playback.ts').ReadingPlaybackSession)(env,fetcher);
  const doc={documentId:'long-scene',revision:1,contentType:'theatre',language:'fr'};
- return {stats,load,prepare,clip,fetcher,env,session,doc};
+ return {stats,load,rawPrepare,prepare,clip,fetcher,env,session,doc};
 }
 const request=(body,signal)=>new Request('http://localhost/api/read-passage',{method:'POST',body:JSON.stringify(body),signal});
 
