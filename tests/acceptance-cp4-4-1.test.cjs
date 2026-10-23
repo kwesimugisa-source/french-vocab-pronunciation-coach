@@ -88,7 +88,7 @@ function routes(){
     this.responses={create:async body=>{
       if(body.text.format.name==="learning_passage"){generationCalls++;return {output_text:JSON.stringify({...fixture,characters:metadata})};}
       const input=JSON.parse(body.input[1].content),items=input.items;analyses.push(input);
-      return {status:"completed",output_text:JSON.stringify({...analysisFor(items),ambience:station(items)})};
+      return {status:"completed",output_text:JSON.stringify({...require('./pronunciation-review-fixture.cjs').analysisFor(items),ambience:station(items)})};
     }};
     this.audio={speech:{create:async body=>{speech.push(body);return {arrayBuffer:async()=>Buffer.from(body.input)};}}};
   }}

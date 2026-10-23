@@ -8,7 +8,7 @@ process.env.OPENAI_API_KEY = "test-only-placeholder";
 
 function routeWith(speech) {
   class MockOpenAI {
-    constructor() { this.audio = { speech: { create: speech } }; }
+    constructor() { this.responses={create:async body=>require('./pronunciation-review-fixture.cjs').analysisReply(body)}; this.audio = { speech: { create: speech } }; }
   }
   return require('./complete-reading.cjs')(createLoader({ openai: MockOpenAI }));
 }

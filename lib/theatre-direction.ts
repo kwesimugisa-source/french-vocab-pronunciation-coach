@@ -1,5 +1,5 @@
-import { PRONUNCIATION_SCHEMA, PRONUNCIATION_PROMPT, validatePronunciationProposal } from "./theatre-pronunciation";
-import type { PronunciationProposal } from "./theatre-pronunciation";
+import { PRONUNCIATION_SCHEMA, PRONUNCIATION_PROMPT, validatePronunciationProposal, inspectPronunciationProposal } from "./theatre-pronunciation";
+import type { PronunciationProposal, PronunciationInspection } from "./theatre-pronunciation";
 import { performanceInstructions, TheatreStyle } from "./theatre-performance";
 import { theatreLinguisticGuidance } from "./theatre-linguistic";
 import type OpenAI from "openai";
@@ -32,6 +32,7 @@ export type DramaticAnalysis = {
   ambience?: AmbienceRecommendation;
   director?: DirectorPlan;
   pronunciation?: PronunciationProposal;
+  pronunciationInspection?: PronunciationInspection;
   scene: { mood: typeof TONES[number]; situation: string; relationships: string; arc: string };
   items: DramaticAnnotation[];
 };
@@ -80,10 +81,12 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
   // Director rejection is deliberately independent of the accepted CP3 plan.
   // Malformed new metadata cannot discard valid legacy direction or ambience.
   let pronunciation: PronunciationProposal | undefined;
+  let pronunciationInspection = inspectPronunciationProposal(undefined,items);
   if(value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value,"pronunciation")) {
     const {pronunciation:raw,...base}=value as Record<string,unknown>;
-    pronunciation=validatePronunciationProposal(raw,items); value=base;
+    pronunciation=validatePronunciationProposal(raw,items); pronunciationInspection=inspectPronunciationProposal(raw,items); value=base;
   }
+  if(value && typeof value==="object" && !Array.isArray(value) && Object.hasOwn(value,"pronunciationInspection")) { const {pronunciationInspection: _ignored,...base}=value as Record<string,unknown>; value=base; }
   let director: DirectorPlan | undefined;
   if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "director")) {
     const { director: raw, ...base } = value as Record<string, unknown>;
@@ -113,6 +116,7 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
     version: 1,
     ...(director ? { director } : {}),
     ...(pronunciation ? { pronunciation } : {}),
+    ...(pronunciationInspection.issues.length ? {pronunciationInspection} : {}),
     ambience: validateAmbience(value.ambience, items),
     scene: { mood: scene.mood, situation: scene.situation as string, relationships: scene.relationships as string, arc: scene.arc as string },
     items: items.map((item) => annotations.get(item.id)!),
@@ -185,7 +189,7 @@ export async function prepareDramaticDirection(
       expectedItemCount: items.length, annotatedItemCount: analysis.items.length, fallbackItemCount: 0,
     } };
   } catch (error) {
-    return fallback(error instanceof AnalysisFailure ? error.reason : "request_failed");
+    return fallback(error instanceof AnalysisFailure ? error.reason : error instanceof Error && ["APIConnectionTimeoutError","TimeoutError"].includes(error.name) ? "timeout" : "request_failed");
   } finally {
     clearTimeout(timer);
     abort.abort();

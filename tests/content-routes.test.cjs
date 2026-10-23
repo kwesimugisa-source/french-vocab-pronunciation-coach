@@ -11,7 +11,7 @@ function routes(output = { title: "Texte", text: "Bonjour à tous." }) {
   const calls = [], speech = [];
   class MockOpenAI {
     constructor() {
-      this.responses = { create: async body => { calls.push(body); return { output_text: JSON.stringify(output) }; } };
+      this.responses = { create: async body => { calls.push(body); if(body.text?.format?.name==='theatre_direction')return require('./pronunciation-review-fixture.cjs').analysisReply(body); return { output_text: JSON.stringify(output) }; } };
       this.audio = { speech: { create: async body => { speech.push(body); return { arrayBuffer: async () => Buffer.from(body.input) }; } } };
     }
   }

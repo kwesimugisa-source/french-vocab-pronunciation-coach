@@ -2,6 +2,14 @@ import { isChorusSpeaker } from "./theatre-speakers";
 import type { TheatreItem } from "./theatre";
 
 export const PRONUNCIATION_VERSION = 1;
+// Internal identifiers only; authored names and aliases retain their Unicode spelling.
+export const LEXICAL_ID_PATTERN = "^[a-zA-Z0-9_-]{1,80}(?![\\s\\S])";
+export type PronunciationFailureReason = "provider_failure" | "timeout" | "output_missing" | "validation_rejected" | "evidence_mismatch" | "inventory_incomplete" | "invalid_dramatic_analysis";
+export class PronunciationPreparationError extends Error {
+  constructor(readonly reason: PronunciationFailureReason) { super(reason); }
+}
+export type PronunciationInspection = { proposal?: PronunciationProposal; validEntries: PronunciationEntry[]; issues: {index: number; reason: PronunciationFailureReason}[] };
+
 export const PRONUNCIATION_CLASSES = ["french-convention", "language-convention", "preserved-foreign", "declared", "uncertain"] as const;
 export type PronunciationClass = typeof PRONUNCIATION_CLASSES[number];
 export type PronunciationContextLanguage = "fr" | "en" | "mixed" | "unknown";
@@ -29,7 +37,7 @@ export const PRONUNCIATION_SCHEMA = {
     version: { type: "integer", enum: [1] }, entries: { type: "array", maxItems: 64, items: {
       type: "object", additionalProperties: false, required: ["id", "name", "aliases", "classification", "language", "target", "evidence", "resolution"], properties: {
         resolution:RESOLUTION_SCHEMA,
-        id: string(80), name: string(80), aliases: { type: "array", maxItems: 8, items: string(80) },
+        id: { ...string(80), minLength: 1, pattern: LEXICAL_ID_PATTERN }, name: string(80), aliases: { type: "array", maxItems: 8, items: string(80) },
         classification: { type: "string", enum: PRONUNCIATION_CLASSES }, language: string(35), target: string(120),
         evidence: { type: "array", maxItems: 4, items: evidence },
       },
@@ -37,8 +45,9 @@ export const PRONUNCIATION_SCHEMA = {
   },
 };
 export const PRONUNCIATION_PROMPT = `Also return pronunciation version 1 as a SEPARATE whole-production lexical interpretation, independent of acting style. Inventory proper names spoken by characters, narrator and chorus, including non-character names. Context contains productionLanguage inferred from the actual complete play (fr/en/mixed/unknown) and inventoryComplete. A documentLanguageHint is relevant but not proof against clearly authored dialogue in another language. Do not infer a language switch from names, punctuation or acting instructions alone.
+Internal lexical id must match ${LEXICAL_ID_PATTERN}: use a unique ASCII machine identifier, never an accented/display name. Preserve authored Unicode names, aliases and evidence exactly in their separate fields.
 For each lexical entity provide id, name, explicit aliases, classification, language, concise non-spoken target, exact itemId/quote evidence, and resolution {status,basis,localLanguage,rationale}. Consider production language, local dialogue, character identity, conventional readings, explicit declarations and known foreign identity TOGETHER. Resolution established means exactly one materially preferred reading is supported; explain why in rationale and cite source context. Do not request clarification merely because a name exists. Ordinary conventional names in coherent French context use French automatically; coherent English context uses English. Unambiguous English dialogue within a French play can support an English name reading. Clear authored declarations of an intentionally foreign name and a known foreign person's intended identity support preservation automatically. Never mechanically Frenchify all names.
-Use french-convention for supported French conventions, language-convention for other supported local-language conventions, preserved-foreign for an established intentional foreign identity, declared for explicit authored pronunciation, otherwise uncertain. Basis is convention/authored/established-identity/uncertain. If invented or unknown without an established reading, if contexts conflict, or multiple materially plausible readings remain, use unknown/ambiguous/conflicting status and do not invent a target. localLanguage describes the supported surrounding dialogue context, including an isolated name uttered within it, not a language guessed from that name. Mixed context alone is not a decision; explicit evidence may resolve it. One accepted decision applies production-wide; conflicting intended readings for one entity require clarification. Do not invent IPA, evidence, aliases or authorial intent. Do not output commands or rewrite script. For a confidently complete inventory with no names return entries [] and inventoryComplete true. For missing/incomplete evidence report incompleteness instead of guessing. Clarification is exceptional, not routine.`;
+Use french-convention for supported French conventions, language-convention for other supported local-language conventions, preserved-foreign for an established intentional foreign identity, declared for explicit authored pronunciation, otherwise uncertain. Basis is convention/authored/established-identity/uncertain. If invented or unknown without an established reading, if contexts conflict, or multiple materially plausible readings remain, use unknown/ambiguous/conflicting status and do not invent a target. localLanguage describes the supported surrounding dialogue context, including an isolated name uttered within it, not a language guessed from that name. Mixed context alone is not a decision; explicit evidence may resolve it. One accepted decision applies production-wide; conflicting intended readings for one entity require clarification. Do not invent IPA, evidence, aliases or authorial intent. Do not output commands or rewrite script. For a confidently complete inventory with no names return entries [] and inventoryComplete true. inventoryComplete describes coverage of lexical entities, not certainty about their pronunciation. Include genuinely ambiguous/conflicting/unknown entries in a complete inventory using the corresponding resolution status. Do not mark coverage incomplete merely because an inventoried name needs linguistic clarification. Use inventoryComplete false only when coverage is incomplete; never fabricate missing evidence. Clarification is exceptional, not routine.`;
 
 const key = (s: string) => s.normalize("NFC").toLocaleLowerCase("fr");
 const nameValid = (s: unknown): s is string => typeof s === "string" && s.length > 0 && s.length <= 80 && /^[\p{L}\p{M}\p{N} ’'\-]+$/u.test(s) && s.trim() === s;
@@ -48,7 +57,7 @@ export function validatePronunciationProposal(value: unknown, items: readonly Th
   if(p.context && (!contextLanguages.includes(p.context.productionLanguage) || typeof p.context.inventoryComplete!=="boolean")) return;
   const ids = new Set<string>();
   for (const e of p.entries) {
-    if (!e || typeof e.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(e.id) || ids.has(e.id) || !nameValid(e.name) ||
+    if (!e || typeof e.id !== "string" || !new RegExp(LEXICAL_ID_PATTERN).test(e.id) || ids.has(e.id) || !nameValid(e.name) ||
       !Array.isArray(e.aliases) || e.aliases.length > 8 || !e.aliases.every(nameValid) || !PRONUNCIATION_CLASSES.includes(e.classification) ||
       typeof e.language !== "string" || (e.language !== "" && !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(e.language)) || e.language.length > 35 ||
       typeof e.target !== "string" || e.target.length > 120 || /[\r\n\x00-\x1f]/u.test(e.target) || !Array.isArray(e.evidence) || e.evidence.length > 4 ||
@@ -58,6 +67,33 @@ export function validatePronunciationProposal(value: unknown, items: readonly Th
   }
   return { version: 1, ...(p.context?{context:{productionLanguage:p.context.productionLanguage,inventoryComplete:p.context.inventoryComplete}}:{}), entries: p.entries.map(e => ({ ...(e.resolution?{resolution:{status:e.resolution.status,basis:e.resolution.basis,localLanguage:e.resolution.localLanguage,rationale:e.resolution.rationale}}:{}),id:e.id,name:e.name,aliases:[...new Set(e.aliases)],classification:e.classification,language:e.language,target:e.target,evidence:e.evidence.map(r=>({itemId:r.itemId,quote:r.quote})) })) };
 }
+/** Inspect model output independently per entry. Retained entries are diagnostic
+ * data, never a partial accepted authority; any issue blocks preparation. */
+export function inspectPronunciationProposal(value: unknown, items: readonly TheatreItem[]): PronunciationInspection {
+  const result: PronunciationInspection = {validEntries:[],issues:[]};
+  const reject=(reason:PronunciationFailureReason,index=-1)=>{result.issues.push({index,reason});return result;};
+  if(value===undefined) return reject("output_missing");
+  const p=value as PronunciationProposal;
+  if(!p || p.version!==1 || !Array.isArray(p.entries) || p.entries.length>64 || !p.context ||
+    !contextLanguages.includes(p.context.productionLanguage) || typeof p.context.inventoryComplete!=="boolean") return reject("validation_rejected");
+  const ids=new Set<string>();
+  for(const [index,e] of p.entries.entries()) {
+    // Validate shape separately from exact source linkage to classify evidence loss.
+    const shape=e && validatePronunciationProposal({version:1,entries:[{...e,evidence:[]}]},items);
+    if(!shape || !e.resolution || ids.has(e.id) || !Array.isArray(e.evidence) || e.evidence.length>4 ||
+      e.evidence.some(r=>!r || typeof r.itemId!=="string" || typeof r.quote!=="string" || !r.quote.length || r.quote.length>120)) {
+      reject("validation_rejected",index); continue;
+    }
+    ids.add(e.id);
+    const valid=validatePronunciationProposal({version:1,entries:[e]},items);
+    if(!valid || (e.resolution.status==="established" && !e.evidence.length)) { reject("evidence_mismatch",index); continue; }
+    result.validEntries.push(valid.entries[0]);
+  }
+  if(!p.context.inventoryComplete) reject("inventory_incomplete");
+  if(!result.issues.length) result.proposal={version:1,context:{productionLanguage:p.context.productionLanguage,inventoryComplete:p.context.inventoryComplete},entries:result.validEntries};
+  return result;
+}
+
 /** Unicode token spans in the ORIGINAL string: offsets are UTF-16, never offsets
  * in a normalized copy. Identity normalization does not rewrite spoken input. */
 export function pronunciationOccurrences(entries: PronunciationEntry[], items: readonly TheatreItem[], onAmbiguous?: (firstId:string,secondId:string)=>void) {

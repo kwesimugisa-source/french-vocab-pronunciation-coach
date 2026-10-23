@@ -51,14 +51,14 @@ for(const status of ['unknown','ambiguous','conflicting'])test(`${status} eviden
 });
 
 test('a confident-looking target without valid evidence or with mismatched convention does not auto-accept',async()=>{
- for(const mutate of [e=>{e.evidence=[];},e=>{e.resolution.localLanguage='mixed';},e=>{e.language='en';},e=>{e.resolution.status='conflicting';},e=>{delete e.resolution;}]){
-  const h=setup('JULIEN: Thomas nous attend.','fr',items=>{const e=entry(items,'Thomas','fr','fr');mutate(e);return [e];});assert.equal((await h.start()).mode,'pronunciation-clarification');assert.equal(h.stats.tts.length,0);
+ for(const mutate of [e=>{e.evidence=[];},e=>{e.resolution.localLanguage='mixed';},e=>{e.language='en';},e=>{delete e.resolution;}]){
+  const h=setup('JULIEN: Thomas nous attend.','fr',items=>{const e=entry(items,'Thomas','fr','fr');mutate(e);return [e];});const r=await h.prepare(request(h.body));assert.equal(r.status,503);assert.equal((await r.json()).code,'THEATRE_ANALYSIS_FAILED');assert.equal(h.stats.tts.length,0);
  }
 });
 
 test('known cast omissions and incomplete inventories cannot masquerade as a complete empty decision',async()=>{
  for(const options of [{},{complete:false}]){
-  const h=setup('THOMAS: Bonjour.\nJULIEN: Thomas !','fr',()=>[],options),d=await h.start();assert.equal(d.mode,'pronunciation-clarification');assert.equal(d.entries[0].name,'THOMAS');assert.equal(h.stats.tts.length,0);
+  const h=setup('THOMAS: Bonjour.\nJULIEN: Thomas !','fr',()=>[],options),r=await h.prepare(request(h.body));assert.equal(r.status,503);const d=await r.json();assert.equal(d.reason,'inventory_incomplete');assert.equal(d.entries,undefined);assert.equal(h.stats.tts.length,0);
  }
 });
 
@@ -75,9 +75,9 @@ test('overlapping entity names hold only those entities, not unrelated establish
  assert.equal(d.mode,'pronunciation-clarification');assert.deepEqual(d.entries.map(e=>e.id),['Camille','another-person']);assert.equal(h.stats.tts.length,0);
 });
 
-test('incomplete inventory preserves already established names and old policy tickets require explicit restart',async()=>{
- const h=setup('JULIEN: Thomas arrive.','fr',items=>[entry(items,'Thomas','fr','fr')],{complete:false}),d=await h.start();assert.equal(d.mode,'pronunciation-clarification');assert.equal(d.inventoryComplete,false);assert.deepEqual(d.entries,[]);
- const tickets=h.load('lib/theatre-scene-ticket.ts'),ticket=tickets.openScene(d.pronunciationToken,'ambiguity-only-mock');ticket.plan.pronunciation.policyVersion=1;
+test('old policy tickets require explicit restart',async()=>{
+ const h=setup('JULIEN: Thomas arrive.','fr',items=>[entry(items,'Thomas','fr','fr')]),m=await h.start();
+ const tickets=h.load('lib/theatre-scene-ticket.ts'),ticket=tickets.openScene(m.sceneToken,'ambiguity-only-mock');ticket.plan.pronunciation.policyVersion=1;
  const r=await h.prepare(request({...h.body,pronunciationToken:tickets.sealScene(ticket.plan,1,'ambiguity-only-mock')}));assert.equal(r.status,410);assert.equal(h.stats.analyses,1);assert.equal(h.stats.tts.length,0);
 });
 

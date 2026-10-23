@@ -244,6 +244,7 @@ export class ReadingPlaybackSession {
     const current = () => this.request === request && !request.signal.aborted;
     let failureCode: "RATE_LIMITED" | "PROVIDER_FAILED" = "PROVIDER_FAILED";
     let failureMessage = requestError(500, "reading");
+    let analysisFailed = false;
     const run = async () => {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
@@ -254,8 +255,17 @@ export class ReadingPlaybackSession {
         if (!response.ok) {
           if(response.status===429) failureCode="RATE_LIMITED";
           failureMessage = requestError(response.status,"reading");
+          const problem=await response.clone().json().catch(()=>null);
+          if(!current()) return;
+          if(problem?.code==="THEATRE_ANALYSIS_FAILED") {
+            analysisFailed=true;
+            this.pendingClarification=null;
+            this.update({clarification:null});
+            this.analysisCache=null;
+            this.pronunciationAuthority=null;
+            failureMessage="La préparation de la scène a échoué. Relancez la lecture pour réessayer l’analyse.";
+          }
           if(authority) {
-            const problem=await response.clone().json().catch(()=>null);
             if(problem?.code==="INVALID_PRONUNCIATION_ANSWER") failureMessage="Vérifiez les noms, les langues et les indications. Résolvez les décisions incertaines ou excluez explicitement les propositions incorrectes.";
             if(problem?.code==="PRONUNCIATION_EXPIRED") failureMessage="La préparation des noms a expiré ou le texte a changé. Recommencez explicitement cette préparation.";
           }
@@ -334,7 +344,7 @@ export class ReadingPlaybackSession {
         this.preparation.finish(preparationId,"failed",failureCode); this.playbackEvent("failed");
         this.releaseOrdinary();
         if (sessionId !== null) this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");
-        if(pronunciationAnswer && clarificationRetry) {
+        if(!analysisFailed && pronunciationAnswer && clarificationRetry) {
           const state={...clarificationRetry.state,entries:[...pronunciationAnswer.entries,...clarificationRetry.state.entries.filter(e=>pronunciationAnswer.excludedIds?.includes(e.id))],excludedIds:pronunciationAnswer.excludedIds};
           this.pendingClarification={...clarificationRetry,state};
           this.update({clarification:state});

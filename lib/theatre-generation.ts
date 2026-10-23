@@ -41,7 +41,7 @@ export async function prepareTheatrePlan(text: string, options: TheatreGeneratio
   const casting = createTheatreCasting(items, options.narratorVoice, metadata);
   // Speed and delivery style do not reinterpret the scene. Canonical source,
   // revision, generated identity labels and Director version do bind reuse.
-  const cacheScope = JSON.stringify({ directorVersion: options.directorEnabled ? 1 : 0, pronunciationVersion: 2,
+  const cacheScope = JSON.stringify({ directorVersion: options.directorEnabled ? 1 : 0, pronunciationVersion: 3,
     documentId: options.documentId ?? null, revision: options.revision ?? null,
     characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) });
   const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text, cacheScope);

@@ -1,3 +1,4 @@
+import { PronunciationPreparationError } from "../../../lib/theatre-pronunciation";
 import { draftPronunciation, acceptPronunciation, pronunciationSourceDigest } from "../../../lib/theatre-pronunciation-authority";
 import { openScene, sealScene, sceneManifest } from "../../../lib/theatre-scene-ticket";
 import { theatreStyle } from "../../../lib/theatre-performance";
@@ -134,13 +135,24 @@ async function handlePost(req: Request) {
           analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, AbortSignal.any([signal, req.signal]), maxOutputTokens, true), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       req.signal.throwIfAborted();
-      plan.pronunciation ??= draftPronunciation(plan,sourceDigest);
+      try {
+        // Previously sealed pending drafts must also satisfy the technical gate.
+        // Already accepted immutable authorities retain their existing identity.
+        if(plan.pronunciation?.status==="needs-clarification") draftPronunciation(plan,sourceDigest);
+        plan.pronunciation ??= draftPronunciation(plan,sourceDigest);
+      }
+      catch(error) {
+        if(!(error instanceof PronunciationPreparationError)) throw error;
+        return Response.json({code:"THEATRE_ANALYSIS_FAILED",reason:error.reason,retryable:true,
+          error:"La préparation de la scène a échoué. Relancez la lecture pour réessayer l’analyse. Aucune clarification linguistique n’est demandée."},
+          {status:503,headers:{"Cache-Control":"no-store"}});
+      }
       if(body.pronunciationAnswer !== undefined) {
         if(!priorPlan || plan.pronunciation.status!=="needs-clarification") return Response.json({code:"INVALID_PRONUNCIATION_ANSWER"},{status:400});
         try { plan.pronunciation=acceptPronunciation(plan.pronunciation,body.pronunciationAnswer,plan); }
         catch { return Response.json({code:"INVALID_PRONUNCIATION_ANSWER",error:"Vérifiez les noms, leurs langues et leurs prononciations. Les décisions incertaines ne peuvent pas être acceptées."},{status:400}); }
       }
-      if(plan.pronunciation.status!=="ready") return Response.json({mode:"pronunciation-clarification",performanceStyle,
+      if(plan.pronunciation.status!=="ready") return Response.json({mode:"pronunciation-clarification",reason:"linguistic_ambiguity",performanceStyle,
         pronunciationToken:sealScene(plan,playbackSpeed,apiKey),entries:plan.pronunciation.entries.filter(e=>!plan.pronunciation!.automaticIds.includes(e.id)),
         inventoryComplete:plan.analysis?.pronunciation?.context?.inventoryComplete===true}, {headers:{"Cache-Control":"no-store"}});
       return Response.json(sceneManifest(plan, playbackSpeed, sealScene(plan, playbackSpeed, apiKey)), {headers:{"Cache-Control":"no-store"}});

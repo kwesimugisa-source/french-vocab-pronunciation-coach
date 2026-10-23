@@ -1,7 +1,7 @@
 // Server-only acceptance boundary. Model interpretation proposes the reading;
 // source validation and the ambiguity policy decide whether it is ready.
 import { createHash, randomUUID } from "node:crypto";
-import { pronunciationInventory, pronunciationOccurrences, validatePronunciationProposal } from "./theatre-pronunciation";
+import { pronunciationInventory, pronunciationOccurrences, validatePronunciationProposal, inspectPronunciationProposal, PronunciationPreparationError } from "./theatre-pronunciation";
 import type { PronunciationAuthority, PronunciationEntry } from "./theatre-pronunciation";
 import type { TheatrePlan } from "./theatre-generation";
 const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -34,23 +34,31 @@ function ready(draft:PronunciationAuthority,entries:PronunciationEntry[],plan:Th
   return freeze(accepted);
 }
 export function draftPronunciation(plan:TheatrePlan,sourceDigest:string):PronunciationAuthority {
-  const proposal=plan.analysis?.pronunciation;
+  if(!plan.analysis) {
+    const reason=plan.direction.fallbackReason;
+    throw new PronunciationPreparationError(reason==="timeout"?"timeout":reason==="invalid_analysis"?"invalid_dramatic_analysis":"provider_failure");
+  }
+  const inspection=plan.analysis.pronunciationInspection ?? inspectPronunciationProposal(plan.analysis.pronunciation,plan.items);
+  if(inspection.issues.length) throw new PronunciationPreparationError(inspection.issues[0].reason);
+  const proposal=inspection.proposal;
+  if(!proposal?.context) throw new PronunciationPreparationError("output_missing");
   const productionLanguage=proposal?.context?.productionLanguage??"unknown";
   const entries=pronunciationInventory(proposal,plan.items,plan.pronunciationCharacters);
+  if(entries.length!==proposal.entries.length) throw new PronunciationPreparationError("inventory_incomplete");
+  if(entries.some(e=>e.resolution?.status==="established" && !isEstablishedPronunciation(e))) throw new PronunciationPreparationError("validation_rejected");
   const draft:PronunciationAuthority={version:1,policyVersion:2,productionLanguage,automaticIds:[],acceptance:"pending",excludedIds:[],productionId:randomUUID(),sourceDigest,revision:1,digest:"",status:"needs-clarification",inventoryReviewed:false,entries,occurrences:[]};
-  // An absent/malformed/incomplete inventory is an analysis failure, not an
-  // ambiguous pronunciation invented from silence. Ask for the missing inventory.
-  if(!proposal?.context) return draft;
+
   try {
     const ambiguousIds=new Set<string>();
     const occurrences=pronunciationOccurrences(entries,plan.items,(a,b)=>{ambiguousIds.add(a);ambiguousIds.add(b);});
+    if(entries.some(e=>!occurrences.some(o=>o.lexicalId===e.id))) throw new PronunciationPreparationError("validation_rejected");
     draft.automaticIds=entries.filter(e=>!ambiguousIds.has(e.id) && isEstablishedPronunciation(e) && occurrences.some(o=>o.lexicalId===e.id)).map(e=>e.id);
   }
-  catch { draft.automaticIds=[]; return draft; }
+  catch { throw new PronunciationPreparationError("validation_rejected"); }
   // Empty, complete inventories are ready immediately, even in mixed-language plays.
   if(proposal.context.inventoryComplete && draft.automaticIds.length===entries.length) {
     try { return ready(draft,entries,plan,"director-established"); }
-    catch { draft.automaticIds=[]; }
+    catch { throw new PronunciationPreparationError("validation_rejected"); }
   }
   return draft;
 }

@@ -15,7 +15,7 @@ function routeWith(analysisReply) {
         analysisCalls.push({ body, options });
         try {
           return analysisReply ? await analysisReply(body) : {
-            status: "completed", output_text: JSON.stringify(analysisFor(JSON.parse(body.input[1].content).items)),
+            status: "completed", output_text: JSON.stringify(require('./pronunciation-review-fixture.cjs').analysisFor(JSON.parse(body.input[1].content).items)),
           };
         } finally { analysesCompleted++; }
       } };
@@ -36,7 +36,7 @@ test("real import route detects theatre and carries contextual office evidence a
   const expected = parseTheatreItems(text);
   const { post, speechCalls, analysisCalls } = routeWith(async body => {
     const items = JSON.parse(body.input[1].content).items;
-    return { status: "completed", output_text: JSON.stringify({ ...analysisFor(items), ambience: {
+    return { status: "completed", output_text: JSON.stringify({ ...require('./pronunciation-review-fixture.cjs').analysisFor(items), ambience: {
       environment: "office", confidence: "high", basis: "contextual", contradictory: false,
       evidence: items.slice(0, 3).map(i => ({ itemId: i.id, quote: i.text })),
       rationale: "An employment registration service handles a numbered client and paperwork.",
@@ -87,20 +87,19 @@ for (const [name, reply] of [
   ["failed", async () => { throw new Error("private model error"); }],
   ["malformed", async () => ({ status: "completed", output_text: "invalid" })],
   ["omitted late item", async (body) => {
-    const analysis = analysisFor(JSON.parse(body.input[1].content).items); analysis.items.pop();
+    const analysis = require('./pronunciation-review-fixture.cjs').analysisFor(JSON.parse(body.input[1].content).items); analysis.items.pop();
     return { status: "completed", output_text: JSON.stringify(analysis) };
   }],
 ]) {
-  test(`route ${name} analysis still synthesizes all 100 items with safe direction`, async () => {
+  test(`route ${name} analysis blocks synthesis with recoverable technical failure`, async () => {
     const { post, speechCalls, analysisCalls } = routeWith(reply);
     const response = await post(request(source(100)));
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 503);
     const data = await response.json();
-    assert.equal(analysisCalls.length, 1); assert.equal(speechCalls.length, 100);
-    assert.equal(data.clips.length, 100); assert.equal(data.clips.at(-1).id, "line-100");
-    assert.equal(data.direction.status, "fallback");
-    assert.equal(data.direction.fallbackItemCount, 100);
-    assert.ok(speechCalls.every(({ body }) => body.instructions.includes("Default delivery")));
+    assert.equal(analysisCalls.length, 1); assert.equal(speechCalls.length, 0);
+    assert.equal(data.code, 'THEATRE_ANALYSIS_FAILED');
+    assert.equal(data.mode, undefined); assert.equal(data.entries, undefined);
+    assert.equal(data.clips, undefined); assert.equal(data.retryable, true);
     assert.ok(!JSON.stringify(data).includes("private model error"));
   });
 }

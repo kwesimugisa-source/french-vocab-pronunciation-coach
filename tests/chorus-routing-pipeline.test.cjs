@@ -40,7 +40,7 @@ for (const [blockIndex, block] of blocks.entries()) for (const [name, label, new
     const env = webEnvironment(), speech = [];
     class MockOpenAI {
       constructor() {
-        this.responses = { create: async () => { throw new Error("No paid analysis in regression test"); } };
+        this.responses = { create: async body=>require('./pronunciation-review-fixture.cjs').analysisReply(body) };
         this.audio = { speech: { create: async body => {
           speech.push(body);
           return { arrayBuffer: async () => Buffer.from("synthetic audio") };

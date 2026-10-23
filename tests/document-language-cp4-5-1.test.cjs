@@ -17,7 +17,7 @@ function route() {
     constructor() {
       this.responses = { create: async body => {
         analyses.push(body);
-        return { status: "completed", output_text: JSON.stringify(analysisFor(JSON.parse(body.input[1].content).items)) };
+        return { status: "completed", output_text: JSON.stringify(require('./pronunciation-review-fixture.cjs').analysisFor(JSON.parse(body.input[1].content).items)) };
       }};
       this.audio = { speech: { create: async body => {
         calls.push(body);

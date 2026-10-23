@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const createLoader=require('./load-typescript.cjs');
 const {harness,request,until,tick}=require('./incremental-fixtures.cjs');
-const {answer}=require('./pronunciation-review-fixture.cjs');
+const {answer,proposalFor}=require('./pronunciation-review-fixture.cjs');
 const {environment,deferred}=require('./playback-fixtures.cjs');
 const {analysisFor,planFor}=require('./director-fixtures.cjs');
 const load=createLoader(),pron=load('lib/theatre-pronunciation.ts'),auth=load('lib/theatre-pronunciation-authority.ts');
@@ -61,9 +61,9 @@ test('source revision/text/casting mismatch, forged/expired tokens and old ticke
 });
 
 test('owner review is recoverable; explicit exclusions are retained, implicit removal is rejected',async()=>{
- const p=await load('lib/theatre-generation.ts').prepareTheatrePlan('JULIEN: Bonjour, Thomas.'),d=auth.draftPronunciation(p,'source');d.entries.push(entry('Bonjour'));
+ const p=await load('lib/theatre-generation.ts').prepareTheatrePlan('JULIEN: Bonjour, Thomas.',{analyze:async json=>{const {items}=JSON.parse(json);return {...analysisFor(items),pronunciation:{...proposalFor(items),entries:[entry('Thomas',{classification:'uncertain',language:'',target:'',resolution:{status:'unknown',basis:'uncertain',localLanguage:'fr',rationale:'Unresolved fixture.'}})]}};}}),d=auth.draftPronunciation(p,'source');d.entries.push(entry('Bonjour'));
  assert.throws(()=>auth.acceptPronunciation(d,{inventoryReviewed:true,entries:[]},p));
- const a=auth.acceptPronunciation(d,{inventoryReviewed:true,entries:[],excludedIds:d.entries.map(e=>e.id)},p);assert.equal(a.excludedIds.length,1);assert.equal(a.acceptance,'owner-confirmed');assert.equal(a.policyVersion,2);assert.ok(Object.isFrozen(a));assert.ok(Object.isFrozen(a.entries));
+ const a=auth.acceptPronunciation(d,{inventoryReviewed:true,entries:[],excludedIds:d.entries.map(e=>e.id)},p);assert.equal(a.excludedIds.length,2);assert.equal(a.acceptance,'owner-confirmed');assert.equal(a.policyVersion,2);assert.ok(Object.isFrozen(a));assert.ok(Object.isFrozen(a.entries));
  p.pronunciation=structuredClone(a);p.pronunciation.sourceDigest='different';assert.throws(()=>auth.assertPronunciationAuthority(p));
 });
 
@@ -77,9 +77,9 @@ test('Unicode identities, multiword aliases, exact spans and homonym ambiguity',
  assert.equal(pron.pronunciationOccurrences([entry("Jean-Pierre"),entry("O’Neil")],parse('JULIEN: Jean-Pierre et O’Neil.')).length,2);
 });
 
-for(const mode of ['missing','malformed','failed'])test(`analysis ${mode} cannot bypass inventory review`,async()=>{
+for(const mode of ['missing','malformed','failed'])test(`analysis ${mode} fails preparation without a clarification form`,async()=>{
  let calls=0;class OpenAI{constructor(){this.responses={create:async b=>{if(mode==='failed')throw Error('mock unavailable');const {items}=JSON.parse(b.input[1].content);return {status:'completed',output_text:JSON.stringify({...analysisFor(items),...(mode==='malformed'?{pronunciation:{version:1,entries:'invalid'}}:{})})};}};this.audio={speech:{create:async()=>{calls++;throw Error('not allowed');}}};}}
- const l=createLoader({openai:OpenAI}),r=await l('app/api/read-passage/route.ts').POST(request(body));assert.equal(r.status,200);const d=await r.json();assert.equal(d.mode,'pronunciation-clarification');assert.equal(d.inventoryComplete,false);assert.equal(calls,0);
+ const l=createLoader({openai:OpenAI}),r=await l('app/api/read-passage/route.ts').POST(request(body));assert.equal(r.status,503);const d=await r.json();assert.equal(d.code,'THEATRE_ANALYSIS_FAILED');assert.equal(d.mode,undefined);assert.equal(d.entries,undefined);assert.equal(calls,0);
 });
 
 test('same whole-scene request proposes names; proposal validation leaves dramatic analysis intact',async()=>{
@@ -140,7 +140,7 @@ test('generated character display-name references are inventoried without invent
 });
 
 test('legacy authority-bearing helper consumes the shared adapter and verifies canonical source',async()=>{
- const g=load('lib/theatre-generation.ts'),source='JULIEN: Thomas ?',p=await g.prepareTheatrePlan(source),d=auth.draftPronunciation(p,auth.pronunciationSourceDigest(source));
+ const g=load('lib/theatre-generation.ts'),source='JULIEN: Thomas ?',p=await g.prepareTheatrePlan(source,{analyze:async json=>{const {items}=JSON.parse(json);return {...analysisFor(items),pronunciation:{...proposalFor(items),entries:[entry('Thomas',{classification:'uncertain',language:'',target:'',resolution:{status:'unknown',basis:'uncertain',localLanguage:'fr',rationale:'Unresolved fixture.'}})]}};}}),d=auth.draftPronunciation(p,auth.pronunciationSourceDigest(source));
  const a=auth.acceptPronunciation(d,{inventoryReviewed:true,entries:[entry('Thomas')]},p),calls=[];
  await g.generateTheatreResponse(source,1,async b=>{calls.push(b);return 'YQ==';},{pronunciationAuthority:a});
  assert.equal(calls.length,1);assert.equal(calls[0].text,'Thomas ?');assert.match(calls[0].instructions,/Accepted production pronunciation/);assert.match(calls[0].instructions,/interrogative/);
