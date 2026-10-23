@@ -1,3 +1,4 @@
+import type { PreparationReason } from "./beta-events";
 import { isChorusSpeaker } from "./theatre-speakers";
 import type { TheatreItem } from "./theatre";
 
@@ -6,7 +7,7 @@ export const PRONUNCIATION_VERSION = 1;
 export const LEXICAL_ID_PATTERN = "^[a-zA-Z0-9_-]{1,80}(?![\\s\\S])";
 export type PronunciationFailureReason = "provider_failure" | "timeout" | "output_missing" | "validation_rejected" | "evidence_mismatch" | "inventory_incomplete" | "invalid_dramatic_analysis";
 export class PronunciationPreparationError extends Error {
-  constructor(readonly reason: PronunciationFailureReason) { super(reason); }
+  constructor(readonly reason: PreparationReason) { super(reason); }
 }
 export type PronunciationInspection = { proposal?: PronunciationProposal; validEntries: PronunciationEntry[]; issues: {index: number; reason: PronunciationFailureReason}[] };
 

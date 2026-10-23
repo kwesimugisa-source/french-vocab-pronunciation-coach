@@ -5,7 +5,7 @@ import { theatreLinguisticGuidance } from "./theatre-linguistic";
 import type OpenAI from "openai";
 import { providerCall } from "./beta-provider";
 import { observePreparation, PREPARATION_CONFIGURATION } from "./beta-events";
-import type { PreparationObserver } from "./beta-events";
+import type { PreparationObserver, PreparationReason, PreparationMetadata, ProviderResponseReason } from "./beta-events";
 import type { TheatreItem } from "./theatre";
 import { theatreRole } from "./theatre-casting";
 import { AMBIENCE_SCHEMA, validateAmbience } from "./theatre-ambience";
@@ -43,6 +43,7 @@ export type AnalysisFallbackReason = "unavailable" | "empty_scene" | "input_budg
 export type DirectionMetadata = {
   version: 1; model: string; status: "analyzed" | "fallback";
   fallbackReason: AnalysisFallbackReason | null;
+  preparationFailureReason?: PreparationReason;
   expectedItemCount: number; annotatedItemCount: number; fallbackItemCount: number;
   director?: { version: 1; status: "applied" | "fallback" | "not_applied"; reason: "analysis_unavailable" | "invalid_or_missing_plan" | "plan_budget" | null; directedItemCount: number };
 };
@@ -69,7 +70,7 @@ export const DRAMATIC_ANALYSIS_SCHEMA = {
 };
 
 class AnalysisFailure extends Error {
-  constructor(readonly reason: AnalysisFallbackReason) { super(reason); }
+  constructor(readonly reason: AnalysisFallbackReason, readonly safeReason?: PreparationReason) { super(reason); }
 }
 function objectWithKeys(value: unknown, keys: string[]): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value) &&
@@ -137,11 +138,28 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
   };
 }
 
+/** Only closed categories escape the SDK response boundary. Never retain raw values. */
+function responseFailure(status: unknown, detail: unknown): ProviderResponseReason {
+  switch(status) {
+    case "incomplete": return detail === "max_output_tokens" ? "provider_output_limit" : detail === "content_filter" ? "provider_content_filter" : "provider_incomplete_unknown";
+    case "failed": return "provider_response_failed";
+    case "cancelled": return "provider_response_cancelled";
+    case "queued": case "in_progress": return "provider_response_nonterminal";
+    default: return "provider_status_unknown";
+  }
+}
+function tokenMetadata(requested: number, usage: {output_tokens?:unknown; output_tokens_details?:{reasoning_tokens?:unknown}} | null | undefined): PreparationMetadata {
+  const result:PreparationMetadata = {};
+  for(const [key,value] of [["requestedMaxOutputTokens",requested],["outputTokens",usage?.output_tokens],["reasoningTokens",usage?.output_tokens_details?.reasoning_tokens]] as const)
+    if(typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000) result[key]=value;
+  return result;
+}
+
 export async function requestDramaticAnalysis(client: OpenAI, sceneJson: string, signal: AbortSignal, maxOutputTokens: number, includeDirector = false, diagnostic?: PreparationObserver): Promise<unknown> {
   // Preparation can downgrade oversized Director plans to the complete legacy
   // scene analysis, without an extra request or any loss of script items.
   includeDirector = includeDirector && JSON.parse(sceneJson).directorRequested !== false;
-  observePreparation(diagnostic,"provider","started");
+  observePreparation(diagnostic,"provider","started","none",tokenMetadata(maxOutputTokens,undefined));
   const response = await providerCall("direction", () => client.responses.create({
     model: DRAMATIC_ANALYSIS_MODEL, store: false, truncation: "disabled",
     reasoning: { effort: "none" }, max_output_tokens: maxOutputTokens,
@@ -167,17 +185,25 @@ Return exact evidence excerpts (at most 400 characters each), their stable item 
     observePreparation(diagnostic,"provider","rejected",signal.aborted ? "cancelled" : error instanceof Error && ["APIConnectionTimeoutError","TimeoutError"].includes(error.name) ? "timeout" : "provider_failure");
     throw error;
   });
-  observePreparation(diagnostic,"provider","passed");
+  observePreparation(diagnostic,"provider","passed","none",tokenMetadata(maxOutputTokens,response.usage));
   observePreparation(diagnostic,"structured_response","started");
-  if (response.status !== "completed") { observePreparation(diagnostic,"structured_response","rejected","incomplete_response"); throw new AnalysisFailure("incomplete_response"); }
+  if (response.status !== "completed") {
+    const reason=responseFailure(response.status,response.incomplete_details?.reason);
+    observePreparation(diagnostic,"structured_response","rejected",reason);
+    throw new AnalysisFailure("incomplete_response",reason);
+  }
+  if(Array.isArray(response.output) && response.output.some(item => item.type === "message" && Array.isArray(item.content) && item.content.some(part => part.type === "refusal"))) {
+    observePreparation(diagnostic,"structured_response","rejected","provider_refusal");
+    throw new AnalysisFailure("invalid_analysis","provider_refusal");
+  }
   if(typeof response.output_text!=="string" || !response.output_text.trim()) {
     observePreparation(diagnostic,"structured_response","absent","structured_response_missing");
     observePreparation(diagnostic,"structured_response","rejected","structured_response_missing");
-    throw new AnalysisFailure("invalid_analysis");
+    throw new AnalysisFailure("invalid_analysis","structured_response_missing");
   }
   observePreparation(diagnostic,"structured_response","present");
   try { const raw = JSON.parse(response.output_text); observePreparation(diagnostic,"structured_response","passed"); return raw; }
-  catch { observePreparation(diagnostic,"structured_response","rejected","parse_rejected"); throw new AnalysisFailure("invalid_analysis"); }
+  catch { observePreparation(diagnostic,"structured_response","rejected","parse_rejected"); throw new AnalysisFailure("invalid_analysis","parse_rejected"); }
 }
 
 export async function prepareDramaticDirection(
@@ -185,10 +211,10 @@ export async function prepareDramaticDirection(
   directorInput?: { characters: { speakerId: string; displayName: string }[] }, diagnostic?: PreparationObserver
 ): Promise<{ analysis: DramaticAnalysis | null; metadata: DirectionMetadata }> {
   observePreparation(diagnostic,"director","started");
-  const fallback = (reason: AnalysisFallbackReason) => { observePreparation(diagnostic,"director","rejected",
-    reason === "invalid_analysis" ? "analysis_rejected" : reason === "request_failed" ? "provider_failure" : reason === "unavailable" ? "analysis_unavailable" : reason);
+  const fallback = (reason: AnalysisFallbackReason, safeReason?: PreparationReason) => { observePreparation(diagnostic,"director","rejected",
+    safeReason ?? (reason === "invalid_analysis" ? "analysis_rejected" : reason === "request_failed" ? "provider_failure" : reason === "unavailable" ? "analysis_unavailable" : reason));
     return ({ analysis: null, metadata: {
-    version: 1 as const, model: DRAMATIC_ANALYSIS_MODEL, status: "fallback" as const, fallbackReason: reason,
+    version: 1 as const, model: DRAMATIC_ANALYSIS_MODEL, status: "fallback" as const, fallbackReason: reason, ...(safeReason ? {preparationFailureReason:safeReason} : {}),
     expectedItemCount: items.length, annotatedItemCount: 0, fallbackItemCount: items.length,
   } }); };
   if (!items.length) return fallback("empty_scene");
@@ -220,7 +246,7 @@ export async function prepareDramaticDirection(
       expectedItemCount: items.length, annotatedItemCount: analysis.items.length, fallbackItemCount: 0,
     } };
   } catch (error) {
-    return fallback(error instanceof AnalysisFailure ? error.reason : error instanceof Error && ["APIConnectionTimeoutError","TimeoutError"].includes(error.name) ? "timeout" : "request_failed");
+    return fallback(error instanceof AnalysisFailure ? error.reason : error instanceof Error && ["APIConnectionTimeoutError","TimeoutError"].includes(error.name) ? "timeout" : "request_failed", error instanceof AnalysisFailure ? error.safeReason : undefined);
   } finally {
     clearTimeout(timer);
     abort.abort();

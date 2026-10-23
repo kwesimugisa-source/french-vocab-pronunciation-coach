@@ -39,7 +39,7 @@ async function logged(fn) {
 const failures = [
   ['provider failure','provider','provider_failure',()=>{throw Error('PRIVATE provider content');}],
   ['provider timeout','provider','timeout',()=>{const e=Error('PRIVATE');e.name='APIConnectionTimeoutError';throw e;}],
-  ['incomplete response','structured_response','incomplete_response',()=>({transport:{status:'incomplete'}})],
+  ['incomplete response','structured_response','provider_incomplete_unknown',()=>({transport:{status:'incomplete'}})],
   ['invalid JSON','structured_response','parse_rejected',()=>({transport:{status:'completed',output_text:'PRIVATE invalid JSON'}})],
   ['missing structured response','structured_response','structured_response_missing',()=>({transport:{status:'completed'}})],
   ['invalid dramatic schema','dramatic_validation','invalid_dramatic_analysis',r=>({...r,items:[]})],
@@ -57,7 +57,7 @@ for (const [label,stage,reason,change] of failures) test(`${label}: exact conten
   const receipt=JSON.parse(response.headers.get('X-Theatre-Preparation-Receipt'));
   assert.equal(response.headers.get('X-Theatre-Request-Id'),id);
   const problem=await response.json();
-  assert.equal(problem.code,'THEATRE_ANALYSIS_FAILED');assert.equal(problem.mode,undefined);assert.equal(problem.entries,undefined);
+  assert.equal(problem.reason,receipt.reason);assert.equal(problem.code,'THEATRE_ANALYSIS_FAILED');assert.equal(problem.mode,undefined);assert.equal(problem.entries,undefined);
   // A log export alone suffices; neither response nor journal is required below.
   const retained=JSON.parse(JSON.stringify(records));h.journal.reset();
   const ends=retained.filter(terminal);assert.equal(ends.length,1);
@@ -379,4 +379,54 @@ test('successful client receipt is retained, correlated and cannot mutate stored
   await session.start(source,'normal',{documentId:'fixture',revision:1,contentType:'theatre',language:'fr'},undefined,'ALICE');
   const receipt=session.getTheatrePreparationSuccess();assert.equal(receipt.disposition,'READY');assert.deepEqual(receipt,records.filter(terminal)[0]);
   receipt.counts.accepted=99;assert.equal(session.getTheatrePreparationSuccess().counts.accepted,2);assert.equal(session.getTheatrePreparationReceipt(),null);session.dispose();
+}));
+
+const responseCases = [
+  ['output limit',{status:'incomplete',incomplete_details:{reason:'max_output_tokens'}},'provider_output_limit'],
+  ['filter',{status:'incomplete',incomplete_details:{reason:'content_filter'}},'provider_content_filter'],
+  ['unknown detail',{status:'incomplete',incomplete_details:{reason:'PRIVATE detail'}},'provider_incomplete_unknown'],
+  ['absent detail',{status:'incomplete'},'provider_incomplete_unknown'],
+  ['failed',{status:'failed'},'provider_response_failed'],
+  ['cancelled',{status:'cancelled'},'provider_response_cancelled'],
+  ['queued',{status:'queued'},'provider_response_nonterminal'],
+  ['in progress',{status:'in_progress'},'provider_response_nonterminal'],
+  ['missing status',{},'provider_status_unknown'],
+  ['unknown status',{status:'PRIVATE status'},'provider_status_unknown'],
+  ['completed refusal',{status:'completed',output:[{type:'message',content:[{type:'refusal',refusal:'PRIVATE refusal'}]}]},'provider_refusal'],
+  ['missing text',{status:'completed'},'structured_response_missing'],
+  ['blank text',{status:'completed',output_text:'   '},'structured_response_missing'],
+  ['invalid JSON',{status:'completed',output_text:'PRIVATE malformed'},'parse_rejected'],
+];
+for(const [label,transport,reason] of responseCases) test('response status refinement: '+label,()=>logged(async records=>{
+  const h=harness(()=>({transport:{...transport,usage:{output_tokens:123,output_tokens_details:{reasoning_tokens:4}}}}));
+  const id=randomUUID(), response=await h.request(id), problem=await response.json();
+  const receipt=JSON.parse(response.headers.get('X-Theatre-Preparation-Receipt'));
+  assert.equal(response.status,503);assert.equal(problem.code,'THEATRE_ANALYSIS_FAILED');
+  assert.equal(problem.reason,reason);assert.equal(receipt.reason,reason);assert.equal(receipt.requestId,id);
+  assert.equal(problem.entries,undefined);assert.equal(problem.mode,undefined);
+  assert.equal(receipt.stage,'structured_response');assert.equal(receipt.disposition,'TECHNICAL_HOLD');
+  assert.equal(receipt.requestedMaxOutputTokens,4096+2*512);
+  assert.equal(receipt.outputTokens,123);assert.equal(receipt.reasoningTokens,4);
+  for(const stage of ['structured_response','director','authority'])
+    assert.equal(records.find(r=>r.stage===stage&&r.outcome==='rejected').reason,reason);
+  assert.equal(records.filter(terminal).length,1);
+  assert.equal(records.filter(r=>r.stage==='structured_response'&&r.outcome==='rejected').length,1);
+  assert.ok(!records.some(r=>['dramatic_validation','pronunciation_validation','director_validation'].includes(r.stage)));
+  assert.doesNotMatch(JSON.stringify([records,problem]),/PRIVATE|refusal":|output_text|incomplete_details/);
+  assert.equal(h.calls(),1);
+}));
+
+test('token diagnostics omit invalid values and reject free-form additions',()=>logged(async records=>{
+  const h=harness(()=>({transport:{status:'incomplete',usage:{output_tokens:Infinity,output_tokens_details:{reasoning_tokens:'PRIVATE'}}}}));
+  const response=await h.request(),receipt=JSON.parse(response.headers.get('X-Theatre-Preparation-Receipt'));
+  assert.equal(receipt.outputTokens,undefined);assert.equal(receipt.reasoningTokens,undefined);
+  const validate=h.load('lib/beta-events.ts').validatePreparationRecord;
+  for(const field of ['requestedMaxOutputTokens','outputTokens','reasoningTokens'])
+    for(const bad of [-1,1.5,NaN,Infinity,1000001,'PRIVATE'])
+      assert.throws(()=>validate({...receipt,[field]:bad}));
+  assert.throws(()=>validate({...receipt,providerStatus:'PRIVATE'}));
+  assert.throws(()=>validate({...receipt,reason:'PRIVATE'}));
+  for(const field of ['requestedMaxOutputTokens','outputTokens','reasoningTokens'])
+    validate({...receipt,[field]:1000000});
+  assert.ok(JSON.stringify(receipt).length<=1024);
 }));

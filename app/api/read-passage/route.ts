@@ -150,7 +150,7 @@ async function handlePost(req: Request, diagnostic?: TheatrePreparationRecorder)
       }
       catch(error) {
         if(!(error instanceof PronunciationPreparationError)) throw error;
-        return Response.json({code:"THEATRE_ANALYSIS_FAILED",reason:error.reason,retryable:true,
+        return Response.json({code:"THEATRE_ANALYSIS_FAILED",reason:diagnostic?.originatingReason() ?? error.reason,retryable:true,
           error:"La préparation de la scène a échoué. Relancez la lecture pour réessayer l’analyse. Aucune clarification linguistique n’est demandée."},
           {status:503,headers:{"Cache-Control":"no-store"}});
       }

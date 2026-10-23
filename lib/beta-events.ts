@@ -20,12 +20,15 @@ export type BetaEvent = BetaData & { eventId: string; sessionId: string; timesta
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export const PREPARATION_STAGES = ["request", "director", "provider", "structured_response", "director_validation", "dramatic_validation", "pronunciation_validation", "inventory", "occurrence_evidence", "authority", "response"] as const;
 export const PREPARATION_OUTCOMES = ["started", "present", "absent", "passed", "rejected", "fallback", "reused", "ignored", "succeeded", "failed", "cancelled", "clarification"] as const;
-export const PREPARATION_REASONS = ["none", "provider_failure", "timeout", "cancelled", "incomplete_response", "structured_response_missing", "parse_rejected", "validation_rejected", "invalid_dramatic_analysis", "output_missing", "evidence_mismatch", "inventory_incomplete", "missing_cast_coverage", "invalid_established_decision", "unbound_occurrence", "authority_rejected", "linguistic_ambiguity", "analysis_unavailable", "analysis_rejected", "director_plan_missing", "director_plan_rejected", "late_result_ignored", "input_budget", "output_budget", "empty_scene", "invalid_request", "rate_limited", "preparation_failed"] as const;
+export const PROVIDER_RESPONSE_REASONS = ["provider_output_limit", "provider_content_filter", "provider_incomplete_unknown", "provider_response_failed", "provider_response_cancelled", "provider_response_nonterminal", "provider_status_unknown", "provider_refusal"] as const;
+export type ProviderResponseReason = typeof PROVIDER_RESPONSE_REASONS[number];
+export const PREPARATION_TOKEN_FIELDS = ["requestedMaxOutputTokens", "outputTokens", "reasoningTokens"] as const;
+export const PREPARATION_REASONS = ["none", ...PROVIDER_RESPONSE_REASONS, "provider_failure", "timeout", "cancelled", "incomplete_response", "structured_response_missing", "parse_rejected", "validation_rejected", "invalid_dramatic_analysis", "output_missing", "evidence_mismatch", "inventory_incomplete", "missing_cast_coverage", "invalid_established_decision", "unbound_occurrence", "authority_rejected", "linguistic_ambiguity", "analysis_unavailable", "analysis_rejected", "director_plan_missing", "director_plan_rejected", "late_result_ignored", "input_budget", "output_budget", "empty_scene", "invalid_request", "rate_limited", "preparation_failed"] as const;
 export const PREPARATION_DISPOSITIONS = ["READY", "CLARIFICATION_REQUIRED", "TECHNICAL_HOLD", "CANCELLED"] as const;
 export const PREPARATION_CONFIGURATION = {schemaVersion:2,provider:"openai",model:"gpt-5.4-mini",directorSchemaVersion:1,pronunciationSchemaVersion:1,pronunciationPolicyVersion:2} as const;
 export const PREPARATION_COUNT_FIELDS = ["established", "ambiguous", "conflicting", "unknown", "rejected", "accepted", "unbound"] as const;
 export type PreparationCounts = Partial<Record<typeof PREPARATION_COUNT_FIELDS[number], number>>;
-export type PreparationMetadata = {counts?:PreparationCounts; authorityRevision?:number};
+export type PreparationMetadata = {counts?:PreparationCounts; authorityRevision?:number} & Partial<Record<typeof PREPARATION_TOKEN_FIELDS[number],number>>;
 export type PreparationStage = typeof PREPARATION_STAGES[number];
 export type PreparationReason = typeof PREPARATION_REASONS[number];
 export type PreparationOutcome = typeof PREPARATION_OUTCOMES[number];
@@ -39,7 +42,7 @@ export function validatePreparationRecord(value: unknown): asserts value is Prep
   if (!plain(value)) throw new Error("Invalid preparation record");
   const v = value as Record<string, unknown>;
   const required=["timestamp","build","requestId","stage","outcome","reason","retryable","elapsedMs","totalElapsedMs",...Object.keys(PREPARATION_CONFIGURATION)];
-  if (Reflect.ownKeys(v).some(k=>typeof k!=="string" || ![...required,"counts","authorityRevision","disposition"].includes(k) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,"value")) || !required.every(k => Object.hasOwn(v,k)) ||
+  if (Reflect.ownKeys(v).some(k=>typeof k!=="string" || ![...required,"counts","authorityRevision","disposition",...PREPARATION_TOKEN_FIELDS].includes(k) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,"value")) || !required.every(k => Object.hasOwn(v,k)) ||
     !Number.isSafeInteger(v.timestamp) || (v.timestamp as number) < 0 || (v.timestamp as number) > 1e15 ||
     typeof v.build !== "string" || !(v.build === "unknown" || (v.build.length === 40 && /^[0-9a-f]{40}$/.test(v.build))) || !isPreparationId(v.requestId) ||
     !PREPARATION_STAGES.includes(v.stage as PreparationStage) || !PREPARATION_OUTCOMES.includes(v.outcome as PreparationOutcome) ||
@@ -47,6 +50,7 @@ export function validatePreparationRecord(value: unknown): asserts value is Prep
     Object.entries(PREPARATION_CONFIGURATION).some(([k,x])=>v[k]!==x) ||
     [v.elapsedMs,v.totalElapsedMs].some(x=>!Number.isInteger(x)||(x as number)<0||(x as number)>3_600_000))
     throw new Error("Invalid preparation record");
+  for(const key of PREPARATION_TOKEN_FIELDS) if(v[key]!==undefined && (!Number.isSafeInteger(v[key]) || (v[key] as number)<0 || (v[key] as number)>1_000_000)) throw new Error("Invalid token count");
   if(v.authorityRevision!==undefined && (!Number.isInteger(v.authorityRevision)||(v.authorityRevision as number)<1||(v.authorityRevision as number)>10000)) throw new Error("Invalid revision");
   if(v.counts!==undefined && (!plain(v.counts) || Reflect.ownKeys(v.counts).some(k=>typeof k!=="string" || !PREPARATION_COUNT_FIELDS.includes(k as typeof PREPARATION_COUNT_FIELDS[number]) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v.counts,k)!,"value")) || Object.values(v.counts).some(n=>!Number.isInteger(n)||(n as number)<0||(n as number)>100000))) throw new Error("Invalid counts");
   const terminal: Record<string,string> = {succeeded:"READY",failed:"TECHNICAL_HOLD",cancelled:"CANCELLED",clarification:"CLARIFICATION_REQUIRED"};

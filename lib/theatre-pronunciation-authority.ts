@@ -40,8 +40,8 @@ export function draftPronunciation(plan:TheatrePlan,sourceDigest:string,diagnost
     const reason=plan.direction.fallbackReason;
     // A legacy fallback does not retain the original parse/validation boundary.
     // Earlier request-scoped observations, when present, remain authoritative.
-    observePreparation(diagnostic,"authority","rejected","analysis_unavailable");
-    throw new PronunciationPreparationError(reason==="timeout"?"timeout":reason==="invalid_analysis"?"invalid_dramatic_analysis":"provider_failure");
+    observePreparation(diagnostic,"authority","rejected",plan.direction.preparationFailureReason ?? "analysis_unavailable");
+    throw new PronunciationPreparationError(plan.direction.preparationFailureReason ?? (reason==="timeout"?"timeout":reason==="invalid_analysis"?"invalid_dramatic_analysis":"provider_failure"));
   }
   observePreparation(diagnostic,"pronunciation_validation","started");
   const inspection=plan.analysis.pronunciationInspection ?? inspectPronunciationProposal(plan.analysis.pronunciation,plan.items);

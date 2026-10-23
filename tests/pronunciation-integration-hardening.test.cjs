@@ -20,7 +20,7 @@ const cases=[
  ['evidence mismatch','evidence_mismatch',r=>{r.pronunciation.entries[0].evidence[0].quote='Not authored';return r;}],
  ['missing output','output_missing',r=>{delete r.pronunciation;return r;}],
  ['explicit incomplete inventory','inventory_incomplete',r=>{r.pronunciation.context.inventoryComplete=false;return r;}],
- ['known cast omission','inventory_incomplete',r=>{r.pronunciation.entries=[];return r;}],
+ ['known cast omission','missing_cast_coverage',r=>{r.pronunciation.entries=[];return r;}],
  ['invalid dramatic annotations with valid pronunciation','invalid_dramatic_analysis',r=>{r.items=[];return r;}],
  ['provider failure','provider_failure',()=>{throw Error('private provider detail');}],
  ['provider timeout','timeout',()=>{const e=Error('private timeout');e.name='APIConnectionTimeoutError';throw e;}],

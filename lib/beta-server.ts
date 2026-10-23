@@ -1,6 +1,6 @@
 // SERVER ONLY: never imported by a client component. No public inspection route.
 import { betaJournal, BetaData } from "./beta-events";
-import { isPreparationId, validatePreparationRecord, copyPreparationRecord, PREPARATION_CONFIGURATION } from "./beta-events";
+import { isPreparationId, validatePreparationRecord, copyPreparationRecord, PREPARATION_CONFIGURATION, PREPARATION_TOKEN_FIELDS } from "./beta-events";
 import type { PreparationRecord, PreparationStage, PreparationReason, PreparationObserver, PreparationMetadata } from "./beta-events";
 import { RATE_MESSAGE } from "./safe-errors";
 export { RATE_MESSAGE } from "./safe-errors";
@@ -63,7 +63,7 @@ export class TheatrePreparationRecorder {
       }
       return;
     }
-    if(!metadata || typeof metadata!=="object" || Array.isArray(metadata) || Object.keys(metadata).some(k=>k!=="counts"&&k!=="authorityRevision")) return;
+    if(!metadata || typeof metadata!=="object" || Array.isArray(metadata) || Object.keys(metadata).some(k=>k!=="counts"&&k!=="authorityRevision"&&!PREPARATION_TOKEN_FIELDS.includes(k as typeof PREPARATION_TOKEN_FIELDS[number]))) return;
     const record = {...PREPARATION_CONFIGURATION,...this.timing(stage),build:this.build,requestId:this.requestId,stage,outcome,reason,retryable:false,...metadata};
     try { validatePreparationRecord(record); } catch { return; }
     if(outcome==="started") { this.starts.set(stage,this.now()); record.elapsedMs=0; }
@@ -74,6 +74,7 @@ export class TheatrePreparationRecorder {
     // Reserve a terminal and one possible ignored late result: 64 records total.
     if(this.count++ < 62) this.emit(record);
   };
+  originatingReason() { return this.failure?.reason; }
   finish(status: number, cancellation?: "cancelled" | "timeout") {
     if(!this.active) return null;
     if(this.terminal) return copyPreparationRecord(this.terminal);

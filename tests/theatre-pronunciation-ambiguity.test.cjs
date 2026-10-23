@@ -58,7 +58,7 @@ test('a confident-looking target without valid evidence or with mismatched conve
 
 test('known cast omissions and incomplete inventories cannot masquerade as a complete empty decision',async()=>{
  for(const options of [{},{complete:false}]){
-  const h=setup('THOMAS: Bonjour.\nJULIEN: Thomas !','fr',()=>[],options),r=await h.prepare(request(h.body));assert.equal(r.status,503);const d=await r.json();assert.equal(d.reason,'inventory_incomplete');assert.equal(d.entries,undefined);assert.equal(h.stats.tts.length,0);
+  const h=setup('THOMAS: Bonjour.\nJULIEN: Thomas !','fr',()=>[],options),r=await h.prepare(request(h.body));assert.equal(r.status,503);const d=await r.json();assert.equal(d.reason,options.complete===false?'inventory_incomplete':'missing_cast_coverage');assert.equal(d.entries,undefined);assert.equal(h.stats.tts.length,0);
  }
 });
 
