@@ -19,6 +19,12 @@ export type PronunciationEntry = {
   id: string; name: string; aliases: string[]; classification: PronunciationClass;
   language: string; target: string; evidence: { itemId: string; quote: string }[];
 };
+/** Counts only; never pass entries, names or linguistic decisions to diagnostics. */
+export function pronunciationDiagnosticCounts(entries:readonly Pick<PronunciationEntry,"resolution">[], rejected=0) {
+  const counts={established:0,ambiguous:0,conflicting:0,unknown:0,rejected,accepted:0,unbound:0};
+  for(const entry of entries) counts[entry.resolution?.status ?? "unknown"]++;
+  return counts;
+}
 export type PronunciationProposal = { version: 1; entries: PronunciationEntry[]; context?: {productionLanguage:PronunciationContextLanguage;inventoryComplete:boolean} };
 export type PronunciationAuthority = {
   version: 1; policyVersion: 2; productionLanguage: PronunciationContextLanguage; automaticIds: string[]; productionId: string; sourceDigest: string; revision: number; digest: string;

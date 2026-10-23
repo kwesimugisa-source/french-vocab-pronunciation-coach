@@ -1,10 +1,11 @@
-import { PronunciationPreparationError } from "../../../lib/theatre-pronunciation";
+import { PronunciationPreparationError, pronunciationDiagnosticCounts } from "../../../lib/theatre-pronunciation";
 import { draftPronunciation, acceptPronunciation, pronunciationSourceDigest } from "../../../lib/theatre-pronunciation-authority";
 import { openScene, sealScene, sceneManifest } from "../../../lib/theatre-scene-ticket";
 import { theatreStyle } from "../../../lib/theatre-performance";
 import OpenAI from "openai";
 import { documentLanguage, DocumentLanguage, pronunciationInstructions } from "../../../lib/document-language";
 import { protectedRoute, providerCall } from "../../../lib/beta-server";
+import type { TheatrePreparationRecorder } from "../../../lib/beta-server";
 import { prepareTheatrePlan, TheatreGenerationError } from "../../../lib/theatre-generation";
 import { requestDramaticAnalysis, withinDirectorBudget } from "../../../lib/theatre-direction";
 import type { TheatreVoice } from "../../../lib/theatre-casting";
@@ -46,7 +47,7 @@ async function speechToBase64({
   return buffer.toString("base64");
 }
 
-async function handlePost(req: Request) {
+async function handlePost(req: Request, diagnostic?: TheatrePreparationRecorder) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
 
@@ -57,6 +58,7 @@ async function handlePost(req: Request) {
     const client = new OpenAI({ apiKey });
 
     const body = await req.json();
+    if(body?.contentType === "theatre") diagnostic?.activate();
     if (!body || typeof body.text !== "string" || !body.text.trim() || body.text.length > MAX_TEXT_LENGTH ||
       (body.contentType !== undefined && !isEffectiveType(body.contentType)))
       return new Response("Texte ou type invalide.", { status: 400 });
@@ -78,6 +80,7 @@ async function handlePost(req: Request) {
 
     const playbackSpeed = speedMap[String(speed)] ?? 1.0;
     const mode = readingMode(text, body.contentType);
+    if(mode === "theatre") diagnostic?.activate();
     if (body.conversationTurnId !== undefined && (body.contentType !== "conversation" || typeof body.conversationTurnId !== "string")) return new Response("Tour de parole invalide.", { status: 400 });
 
     if (body.contentType === "conversation") {
@@ -122,24 +125,28 @@ async function handlePost(req: Request) {
       const sourceDigest=pronunciationSourceDigest(text,body.documentId,body.revision,theatreCharacters);
       let priorPlan;
       if(body.pronunciationToken !== undefined) {
+        diagnostic?.observe("authority","started");
         try {
           priorPlan=openScene(body.pronunciationToken,apiKey).plan;
           if(priorPlan.pronunciation?.policyVersion!==2 || priorPlan.pronunciation.sourceDigest!==sourceDigest) throw new Error("Source mismatch");
+          diagnostic?.observe("director","reused");
+          diagnostic?.observe("dramatic_validation",priorPlan.analysis?"reused":"absent");
+          diagnostic?.observe("director_validation",priorPlan.analysis?.director?"reused":"absent",priorPlan.analysis?.director?"none":"director_plan_missing");
         } catch { return Response.json({code:"PRONUNCIATION_EXPIRED",error:"La préparation a expiré ou le texte a changé. Recommencez explicitement la préparation."},{status:410}); }
       }
       const plan = priorPlan ? {...priorPlan,performanceStyle,direction:{...priorPlan.direction,
         director:{version:1 as const,status:performanceStyle==="clarte"?"not_applied" as const:priorPlan.analysis?.director?"applied" as const:"fallback" as const,
         reason:performanceStyle==="clarte"||priorPlan.analysis?.director?null:!priorPlan.analysis?"analysis_unavailable" as const:!withinDirectorBudget(priorPlan.items)?"plan_budget" as const:"invalid_or_missing_plan" as const,
         directedItemCount:performanceStyle==="naturel"?priorPlan.analysis?.director?.lines.length??0:0}}} : await prepareTheatrePlan(text,
-        { performanceStyle, theatreCharacters, directorEnabled: true, documentId: body.documentId, revision: body.revision,
-          analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, AbortSignal.any([signal, req.signal]), maxOutputTokens, true), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
+        { diagnostic:diagnostic?.observe, performanceStyle, theatreCharacters, directorEnabled: true, documentId: body.documentId, revision: body.revision,
+          analyze: (sceneJson, signal, maxOutputTokens) => requestDramaticAnalysis(client, sceneJson, AbortSignal.any([signal, req.signal]), maxOutputTokens, true, diagnostic?.observe), analysisCacheKey:body.analysisCacheKey, ambienceDecision:body.ambienceDecision, skipAnalysis:body.skipAnalysis === true }
       );
       req.signal.throwIfAborted();
       try {
         // Previously sealed pending drafts must also satisfy the technical gate.
         // Already accepted immutable authorities retain their existing identity.
-        if(plan.pronunciation?.status==="needs-clarification") draftPronunciation(plan,sourceDigest);
-        plan.pronunciation ??= draftPronunciation(plan,sourceDigest);
+        if(plan.pronunciation?.status==="needs-clarification") draftPronunciation(plan,sourceDigest,diagnostic?.observe);
+        plan.pronunciation ??= draftPronunciation(plan,sourceDigest,diagnostic?.observe);
       }
       catch(error) {
         if(!(error instanceof PronunciationPreparationError)) throw error;
@@ -148,13 +155,17 @@ async function handlePost(req: Request) {
           {status:503,headers:{"Cache-Control":"no-store"}});
       }
       if(body.pronunciationAnswer !== undefined) {
+        diagnostic?.observe("authority","started");
         if(!priorPlan || plan.pronunciation.status!=="needs-clarification") return Response.json({code:"INVALID_PRONUNCIATION_ANSWER"},{status:400});
-        try { plan.pronunciation=acceptPronunciation(plan.pronunciation,body.pronunciationAnswer,plan); }
-        catch { return Response.json({code:"INVALID_PRONUNCIATION_ANSWER",error:"Vérifiez les noms, leurs langues et leurs prononciations. Les décisions incertaines ne peuvent pas être acceptées."},{status:400}); }
+        try { plan.pronunciation=acceptPronunciation(plan.pronunciation,body.pronunciationAnswer,plan); diagnostic?.observe("authority","passed"); }
+        catch { diagnostic?.observe("authority","rejected","authority_rejected"); return Response.json({code:"INVALID_PRONUNCIATION_ANSWER",error:"Vérifiez les noms, leurs langues et leurs prononciations. Les décisions incertaines ne peuvent pas être acceptées."},{status:400}); }
       }
       if(plan.pronunciation.status!=="ready") return Response.json({mode:"pronunciation-clarification",reason:"linguistic_ambiguity",performanceStyle,
         pronunciationToken:sealScene(plan,playbackSpeed,apiKey),entries:plan.pronunciation.entries.filter(e=>!plan.pronunciation!.automaticIds.includes(e.id)),
         inventoryComplete:plan.analysis?.pronunciation?.context?.inventoryComplete===true}, {headers:{"Cache-Control":"no-store"}});
+      diagnostic?.observe("authority",priorPlan?.pronunciation?.status==="ready"?"reused":"passed","none",{
+        authorityRevision:plan.pronunciation.revision,counts:{...pronunciationDiagnosticCounts(plan.pronunciation.entries),accepted:plan.pronunciation.entries.length}});
+      diagnostic?.observe("response","started");
       return Response.json(sceneManifest(plan, playbackSpeed, sealScene(plan, playbackSpeed, apiKey)), {headers:{"Cache-Control":"no-store"}});
     }
     if (text.length > TTS_INPUT_LIMIT) return new Response(
@@ -191,4 +202,4 @@ async function handlePost(req: Request) {
     return new Response("Impossible de préparer la lecture. Réessayez.", { status: 500 });
   }
 }
-export const POST = protectedRoute("reading", handlePost);
+export const POST = protectedRoute("reading", handlePost, {theatrePreparation:true});

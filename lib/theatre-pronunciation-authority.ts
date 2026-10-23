@@ -1,9 +1,11 @@
 // Server-only acceptance boundary. Model interpretation proposes the reading;
 // source validation and the ambiguity policy decide whether it is ready.
 import { createHash, randomUUID } from "node:crypto";
-import { pronunciationInventory, pronunciationOccurrences, validatePronunciationProposal, inspectPronunciationProposal, PronunciationPreparationError } from "./theatre-pronunciation";
+import { pronunciationInventory, pronunciationOccurrences, validatePronunciationProposal, inspectPronunciationProposal, PronunciationPreparationError, pronunciationDiagnosticCounts } from "./theatre-pronunciation";
 import type { PronunciationAuthority, PronunciationEntry } from "./theatre-pronunciation";
 import type { TheatrePlan } from "./theatre-generation";
+import { observePreparation } from "./beta-events";
+import type { PreparationObserver } from "./beta-events";
 const hash=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function freeze<T>(value:T):T {
   if(value && typeof value==="object") { for(const child of Object.values(value)) freeze(child); Object.freeze(value); }
@@ -33,33 +35,51 @@ function ready(draft:PronunciationAuthority,entries:PronunciationEntry[],plan:Th
   accepted.digest=hash({...accepted,digest:undefined});
   return freeze(accepted);
 }
-export function draftPronunciation(plan:TheatrePlan,sourceDigest:string):PronunciationAuthority {
+export function draftPronunciation(plan:TheatrePlan,sourceDigest:string,diagnostic?:PreparationObserver):PronunciationAuthority {
   if(!plan.analysis) {
     const reason=plan.direction.fallbackReason;
+    // A legacy fallback does not retain the original parse/validation boundary.
+    // Earlier request-scoped observations, when present, remain authoritative.
+    observePreparation(diagnostic,"authority","rejected","analysis_unavailable");
     throw new PronunciationPreparationError(reason==="timeout"?"timeout":reason==="invalid_analysis"?"invalid_dramatic_analysis":"provider_failure");
   }
+  observePreparation(diagnostic,"pronunciation_validation","started");
   const inspection=plan.analysis.pronunciationInspection ?? inspectPronunciationProposal(plan.analysis.pronunciation,plan.items);
-  if(inspection.issues.length) throw new PronunciationPreparationError(inspection.issues[0].reason);
+  if(inspection.issues.length) {
+    const reason=inspection.issues[0].reason;
+    observePreparation(diagnostic,reason==="evidence_mismatch"?"occurrence_evidence":reason==="inventory_incomplete"?"inventory":"pronunciation_validation","rejected",reason,
+      {counts:pronunciationDiagnosticCounts(inspection.validEntries,new Set(inspection.issues.filter(i=>i.index>=0).map(i=>i.index)).size)});
+    throw new PronunciationPreparationError(reason);
+  }
   const proposal=inspection.proposal;
-  if(!proposal?.context) throw new PronunciationPreparationError("output_missing");
+  if(!proposal?.context) { observePreparation(diagnostic,"pronunciation_validation","rejected","output_missing"); throw new PronunciationPreparationError("output_missing"); }
+  observePreparation(diagnostic,"pronunciation_validation","passed","none",{counts:pronunciationDiagnosticCounts(proposal.entries)});
   const productionLanguage=proposal?.context?.productionLanguage??"unknown";
+  observePreparation(diagnostic,"inventory","started");
   const entries=pronunciationInventory(proposal,plan.items,plan.pronunciationCharacters);
-  if(entries.length!==proposal.entries.length) throw new PronunciationPreparationError("inventory_incomplete");
-  if(entries.some(e=>e.resolution?.status==="established" && !isEstablishedPronunciation(e))) throw new PronunciationPreparationError("validation_rejected");
+  if(entries.length!==proposal.entries.length) { observePreparation(diagnostic,"inventory","rejected","missing_cast_coverage"); throw new PronunciationPreparationError("inventory_incomplete"); }
+  observePreparation(diagnostic,"inventory","passed");
+  observePreparation(diagnostic,"authority","started");
+  const invalidEstablished=entries.filter(e=>e.resolution?.status==="established" && !isEstablishedPronunciation(e)).length;
+  if(invalidEstablished) { observePreparation(diagnostic,"authority","rejected","invalid_established_decision",{counts:{rejected:invalidEstablished}}); throw new PronunciationPreparationError("validation_rejected"); }
   const draft:PronunciationAuthority={version:1,policyVersion:2,productionLanguage,automaticIds:[],acceptance:"pending",excludedIds:[],productionId:randomUUID(),sourceDigest,revision:1,digest:"",status:"needs-clarification",inventoryReviewed:false,entries,occurrences:[]};
 
+  observePreparation(diagnostic,"occurrence_evidence","started");
   try {
     const ambiguousIds=new Set<string>();
     const occurrences=pronunciationOccurrences(entries,plan.items,(a,b)=>{ambiguousIds.add(a);ambiguousIds.add(b);});
-    if(entries.some(e=>!occurrences.some(o=>o.lexicalId===e.id))) throw new PronunciationPreparationError("validation_rejected");
+    const unbound=entries.filter(e=>!occurrences.some(o=>o.lexicalId===e.id)).length;
+    if(unbound) { observePreparation(diagnostic,"occurrence_evidence","rejected","unbound_occurrence",{counts:{unbound}}); throw new PronunciationPreparationError("validation_rejected"); }
     draft.automaticIds=entries.filter(e=>!ambiguousIds.has(e.id) && isEstablishedPronunciation(e) && occurrences.some(o=>o.lexicalId===e.id)).map(e=>e.id);
   }
-  catch { throw new PronunciationPreparationError("validation_rejected"); }
+  catch { observePreparation(diagnostic,"occurrence_evidence","rejected","validation_rejected"); throw new PronunciationPreparationError("validation_rejected"); }
+  observePreparation(diagnostic,"occurrence_evidence","passed","none",{counts:{unbound:0}});
   // Empty, complete inventories are ready immediately, even in mixed-language plays.
   if(proposal.context.inventoryComplete && draft.automaticIds.length===entries.length) {
-    try { return ready(draft,entries,plan,"director-established"); }
-    catch { throw new PronunciationPreparationError("validation_rejected"); }
+    try { const accepted=ready(draft,entries,plan,"director-established"); observePreparation(diagnostic,"authority","passed","none",{authorityRevision:accepted.revision,counts:{accepted:entries.length}}); return accepted; }
+    catch { observePreparation(diagnostic,"authority","rejected","authority_rejected"); throw new PronunciationPreparationError("validation_rejected"); }
   }
+  observePreparation(diagnostic,"authority","passed","linguistic_ambiguity",{authorityRevision:draft.revision,counts:{accepted:draft.automaticIds.length}});
   return draft;
 }
 export function acceptPronunciation(draft:PronunciationAuthority,answer:unknown,plan:TheatrePlan):PronunciationAuthority {

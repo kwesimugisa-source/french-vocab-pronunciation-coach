@@ -8,14 +8,27 @@ export default function TheatreDebugPanel({playback,sessionId}:{playback:Reading
   const [index,setIndex]=useState(0),[component,setComponent]=useState(0);
   useEffect(()=>{setEnabled(new URLSearchParams(window.location.search).get("theatreDebug")==="1");},[]);
   useEffect(()=>{setOutput("");setNotice("");setIndex(0);setComponent(0);},[sessionId]);
-  if(!enabled) return null;
+  const receipt=playback.getTheatrePreparationReceipt();
+  const success=enabled ? playback.getTheatrePreparationSuccess() : null;
+  const unconfirmed=playback.getUnconfirmedTheatrePreparation();
+  if(!enabled && !receipt && !unconfirmed) return null;
   const clips=playback.theatre.getSnapshot().queue;
   const show=(value: unknown)=>{setOutput(JSON.stringify(value,null,2));setNotice("");};
   const button="min-h-11 rounded-xl border bg-white px-3 py-2 text-sm";
   return <details className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="Diagnostic théâtre">
-    <summary className="cursor-pointer font-semibold">Diagnostic théâtre — mode debug local</summary>
-    <p className="my-2 text-sm">Aucun envoi automatique. La trace exclut le dialogue et les noms des personnages. Les détails de direction contiennent du texte de la scène : vérifiez-les avant de les partager. Exportez avant d’arrêter, de recharger ou de remplacer la scène.</p>
-    <button type="button" className={button} onClick={()=>show(playback.exportTheatreDiagnostics())}>Afficher la trace</button>
+    <summary className="cursor-pointer font-semibold">{enabled ? "Diagnostic théâtre — mode debug local" : "Diagnostic de préparation"}</summary>
+    {unconfirmed && <div className="my-2">
+      <p className="break-all text-sm">Aucun reçu d’échec serveur disponible pour la requête : {unconfirmed.requestId}. Vérifiez son résultat dans les journaux serveur.</p>
+      <button type="button" className={button} onClick={()=>show(unconfirmed)}>Afficher la référence de requête</button>
+    </div>}
+    {receipt && <div className="my-2">
+      <p className="break-all text-sm">Référence du dernier échec de préparation : {receipt.requestId}</p>
+      <button type="button" className={button} onClick={()=>show(receipt)}>Afficher le reçu de préparation (sans contenu)</button>
+    </div>}
+    {success && <button type="button" className={button} onClick={()=>show(success)}>Afficher le reçu de préparation réussie</button>}
+    <p className="my-2 text-sm">Le reçu ne contient pas de texte de la scène. Sa référence permet de retrouver l’échec dans les journaux serveur pendant leur durée de conservation. Copiez-le avant de recharger la page.</p>
+    {enabled && <p className="my-2 text-sm">Les exports locaux ne sont pas envoyés automatiquement. La trace exclut le dialogue et les noms des personnages. Les détails de direction contiennent du texte de la scène : vérifiez-les avant de les partager. Exportez avant d’arrêter, de recharger ou de remplacer la scène.</p>}
+    {enabled && <><button type="button" className={button} onClick={()=>show(playback.exportTheatreDiagnostics())}>Afficher la trace</button>
     <div className="my-3 flex flex-wrap items-center gap-2">
       <label>Élément <select className="min-h-11 max-w-full rounded border p-2" value={index} onChange={e=>{setIndex(Number(e.target.value));setComponent(0);}}>
         {clips.map(c=><option key={c.id} value={c.index}>{c.index+1} — {c.type}</option>)}
@@ -24,7 +37,7 @@ export default function TheatreDebugPanel({playback,sessionId}:{playback:Reading
         {(clips[index]?.chorus?[0,1,2]:[0]).map(c=><option key={c} value={c}>{c+1}</option>)}
       </select></label>
       <button type="button" className={button} disabled={!clips.length} onClick={()=>show(playback.getTheatreDelivery(index,component) ?? {unavailable:"Pas de requête capturée : élément non préparé, pause silencieuse, capture non activée au départ ou limite de mémoire atteinte."})}>Afficher la direction et la requête TTS (contient du texte)</button>
-    </div>
+    </div></>}
     {output && <>
       <textarea aria-label="Export diagnostic" className="h-64 w-full rounded border bg-white p-2 font-mono text-xs" readOnly value={output}/>
       <div className="mt-2 flex flex-wrap gap-2">

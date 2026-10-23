@@ -79,7 +79,7 @@ test('diagnostic storage is bounded and excludes arbitrary top-level response fi
 test('debug UI is absent until explicitly enabled; scheduler constants remain six/two',()=>{
  const load=createLoader(),React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
  const Panel=load('components/article-reader/TheatreDebugPanel.tsx').default;
- assert.equal(renderToStaticMarkup(React.createElement(Panel,{playback:{},sessionId:0})), '');
+ assert.equal(renderToStaticMarkup(React.createElement(Panel,{playback:{getTheatrePreparationReceipt:()=>null,getUnconfirmedTheatrePreparation:()=>null},sessionId:0})), '');
  const config=load('lib/theatre-incremental.ts');assert.equal(config.THEATRE_LOOKAHEAD,6);assert.equal(config.THEATRE_PREPARATION_CONCURRENCY,2);
 });
 
@@ -87,7 +87,7 @@ test('enabled debug panel exports trace separately from selected-item content',(
  const React=require('react'),values=[true,'','',0,0];let cursor=0;
  const load=createLoader({react:{...React,useEffect:()=>{},useState:()=>{const i=cursor++;return [values[i],v=>{values[i]=v;}];}}});
  const Panel=load('components/article-reader/TheatreDebugPanel.tsx').default;
- const playback={theatre:{getSnapshot:()=>({queue:[{id:'line-1',index:0,type:'dialogue'}]})},exportTheatreDiagnostics:()=>({items:[{id:'item-0',speaker:'speaker-1'}]}),getTheatreDelivery:()=>({tts:{input:'Thomas !'}})};
+ const playback={getTheatrePreparationReceipt:()=>null,getTheatrePreparationSuccess:()=>null,getUnconfirmedTheatrePreparation:()=>null,theatre:{getSnapshot:()=>({queue:[{id:'line-1',index:0,type:'dialogue'}]})},exportTheatreDiagnostics:()=>({items:[{id:'item-0',speaker:'speaker-1'}]}),getTheatreDelivery:()=>({tts:{input:'Thomas !'}})};
  function render(){cursor=0;return Panel({playback,sessionId:1});}
  function elements(node){if(!node||typeof node!=='object')return [];return [node,...React.Children.toArray(node.props?.children).flatMap(elements)];}
  function click(label){const button=elements(render()).find(e=>e.type==='button'&&e.props.children===label);assert.ok(button);button.props.onClick();}

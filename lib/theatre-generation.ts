@@ -8,6 +8,8 @@ import { createTheatreCasting, theatreRole } from "./theatre-casting";
 import type { TheatreVoice } from "./theatre-casting";
 import { dramaticInstructions, prepareDramaticDirection, withinDirectorBudget } from "./theatre-direction";
 import type { SceneAnalyzer } from "./theatre-direction";
+import { observePreparation } from "./beta-events";
+import type { PreparationObserver } from "./beta-events";
 import { noAmbience, validateAmbience } from "./theatre-ambience";
 import { validateTheatreCharacters } from "./theatre-characters";
 import { theatreAnalysisCache } from "./theatre-analysis-cache";
@@ -32,7 +34,7 @@ export class TheatreGenerationError extends Error {
   }
 }
 
-export type TheatreGenerationOptions = { pronunciationAuthority?: PronunciationAuthority; requirePronunciationAuthority?: boolean; performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number };
+export type TheatreGenerationOptions = { diagnostic?: PreparationObserver; pronunciationAuthority?: PronunciationAuthority; requirePronunciationAuthority?: boolean; performanceStyle?: unknown; theatreCharacters?: unknown; analyze?: SceneAnalyzer; narratorVoice?: TheatreVoice; analysisTimeoutMs?: number; analysisCacheKey?: unknown; ambienceDecision?: unknown; skipAnalysis?: boolean; directorEnabled?: boolean; documentId?: string; revision?: number };
 
 export async function prepareTheatrePlan(text: string, options: TheatreGenerationOptions = {}) {
   const performanceStyle = theatreStyle(options.performanceStyle);
@@ -45,11 +47,12 @@ export async function prepareTheatrePlan(text: string, options: TheatreGeneratio
     documentId: options.documentId ?? null, revision: options.revision ?? null,
     characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) });
   const reuse = theatreAnalysisCache.get(options.analysisCacheKey, text, cacheScope);
+  if(reuse) observePreparation(options.diagnostic,"director","reused");
   const prior = validateAmbience(options.ambienceDecision, items);
   const ambienceDecision = prior.confidence === "high" ? prior : undefined;
   const { analysis, metadata: direction } = await prepareDramaticDirection(items,
     reuse ? async () => reuse : options.skipAnalysis ? undefined : options.analyze, options.analysisTimeoutMs, ambienceDecision,
-    options.directorEnabled ? { characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) } : undefined);
+    options.directorEnabled ? { characters: metadata.map(({speakerId,displayName}) => ({speakerId,displayName})) } : undefined, options.diagnostic);
   if (analysis && ambienceDecision) analysis.ambience = ambienceDecision;
   if (options.directorEnabled || analysis?.director) direction.director = {
     version: 1, status: performanceStyle === "clarte" ? "not_applied" : analysis?.director ? "applied" : "fallback",

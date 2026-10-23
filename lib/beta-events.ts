@@ -1,6 +1,6 @@
 /** Privacy boundary: no free-form strings, source IDs, error messages or content.
- * Bounded ephemeral diagnostics ONLY. No transport or durable storage configured.
- * A durable adapter/admin deployment requires the owner's infrastructure decision. */
+ * Journals are bounded and ephemeral. Theatre preparation records also go to
+ * hosting logs through beta-server; no client transport or public inspection API. */
 export const EVENTS = ["document_created", "document_imported", "document_reinterpreted", "operation", "playback", "pronunciation_attempt", "pronunciation_retry", "theatre_replay", "theatre_practice", "virelangue_listen", "virelangue_practice", "ambience", "provider", "rate_limit", "theatre_style"] as const;
 export const OPERATIONS = ["generation", "reading", "vocabulary", "pronunciation", "direction", "tts", "transcription"] as const;
 export const STATUSES = ["started", "completed", "failed", "cancelled", "paused", "resumed", "analyzed_no_ambience", "detected_available", "detected_unavailable", "analysis_unavailable", "playback_failed"] as const;
@@ -18,6 +18,46 @@ export type BetaData = {
 };
 export type BetaEvent = BetaData & { eventId: string; sessionId: string; timestamp: number };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const PREPARATION_STAGES = ["request", "director", "provider", "structured_response", "director_validation", "dramatic_validation", "pronunciation_validation", "inventory", "occurrence_evidence", "authority", "response"] as const;
+export const PREPARATION_OUTCOMES = ["started", "present", "absent", "passed", "rejected", "fallback", "reused", "ignored", "succeeded", "failed", "cancelled", "clarification"] as const;
+export const PREPARATION_REASONS = ["none", "provider_failure", "timeout", "cancelled", "incomplete_response", "structured_response_missing", "parse_rejected", "validation_rejected", "invalid_dramatic_analysis", "output_missing", "evidence_mismatch", "inventory_incomplete", "missing_cast_coverage", "invalid_established_decision", "unbound_occurrence", "authority_rejected", "linguistic_ambiguity", "analysis_unavailable", "analysis_rejected", "director_plan_missing", "director_plan_rejected", "late_result_ignored", "input_budget", "output_budget", "empty_scene", "invalid_request", "rate_limited", "preparation_failed"] as const;
+export const PREPARATION_DISPOSITIONS = ["READY", "CLARIFICATION_REQUIRED", "TECHNICAL_HOLD", "CANCELLED"] as const;
+export const PREPARATION_CONFIGURATION = {schemaVersion:2,provider:"openai",model:"gpt-5.4-mini",directorSchemaVersion:1,pronunciationSchemaVersion:1,pronunciationPolicyVersion:2} as const;
+export const PREPARATION_COUNT_FIELDS = ["established", "ambiguous", "conflicting", "unknown", "rejected", "accepted", "unbound"] as const;
+export type PreparationCounts = Partial<Record<typeof PREPARATION_COUNT_FIELDS[number], number>>;
+export type PreparationMetadata = {counts?:PreparationCounts; authorityRevision?:number};
+export type PreparationStage = typeof PREPARATION_STAGES[number];
+export type PreparationReason = typeof PREPARATION_REASONS[number];
+export type PreparationOutcome = typeof PREPARATION_OUTCOMES[number];
+export type PreparationRecord = { timestamp: number; build: string; requestId: string; stage: PreparationStage; outcome: PreparationOutcome; reason: PreparationReason; retryable: boolean;
+  elapsedMs:number; totalElapsedMs:number; disposition?:typeof PREPARATION_DISPOSITIONS[number] } & typeof PREPARATION_CONFIGURATION & PreparationMetadata;
+export type PreparationObserver = (stage: PreparationStage, outcome: Exclude<PreparationOutcome,"succeeded"|"failed"|"cancelled"|"clarification"|"ignored">, reason?: PreparationReason, metadata?:PreparationMetadata) => void;
+export function isPreparationId(value: unknown): value is string { return typeof value === "string" && value.length === 36 && uuid.test(value); }
+/** Closed contract: no arbitrary text, content-derived IDs, or optional payloads. */
+export function validatePreparationRecord(value: unknown): asserts value is PreparationRecord {
+  const plain=(x:unknown):x is Record<string,unknown>=>!!x && typeof x==="object" && [Object.prototype,null].includes(Object.getPrototypeOf(x));
+  if (!plain(value)) throw new Error("Invalid preparation record");
+  const v = value as Record<string, unknown>;
+  const required=["timestamp","build","requestId","stage","outcome","reason","retryable","elapsedMs","totalElapsedMs",...Object.keys(PREPARATION_CONFIGURATION)];
+  if (Reflect.ownKeys(v).some(k=>typeof k!=="string" || ![...required,"counts","authorityRevision","disposition"].includes(k) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,"value")) || !required.every(k => Object.hasOwn(v,k)) ||
+    !Number.isSafeInteger(v.timestamp) || (v.timestamp as number) < 0 || (v.timestamp as number) > 1e15 ||
+    typeof v.build !== "string" || !(v.build === "unknown" || (v.build.length === 40 && /^[0-9a-f]{40}$/.test(v.build))) || !isPreparationId(v.requestId) ||
+    !PREPARATION_STAGES.includes(v.stage as PreparationStage) || !PREPARATION_OUTCOMES.includes(v.outcome as PreparationOutcome) ||
+    !PREPARATION_REASONS.includes(v.reason as PreparationReason) || typeof v.retryable !== "boolean" ||
+    Object.entries(PREPARATION_CONFIGURATION).some(([k,x])=>v[k]!==x) ||
+    [v.elapsedMs,v.totalElapsedMs].some(x=>!Number.isInteger(x)||(x as number)<0||(x as number)>3_600_000))
+    throw new Error("Invalid preparation record");
+  if(v.authorityRevision!==undefined && (!Number.isInteger(v.authorityRevision)||(v.authorityRevision as number)<1||(v.authorityRevision as number)>10000)) throw new Error("Invalid revision");
+  if(v.counts!==undefined && (!plain(v.counts) || Reflect.ownKeys(v.counts).some(k=>typeof k!=="string" || !PREPARATION_COUNT_FIELDS.includes(k as typeof PREPARATION_COUNT_FIELDS[number]) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v.counts,k)!,"value")) || Object.values(v.counts).some(n=>!Number.isInteger(n)||(n as number)<0||(n as number)>100000))) throw new Error("Invalid counts");
+  const terminal: Record<string,string> = {succeeded:"READY",failed:"TECHNICAL_HOLD",cancelled:"CANCELLED",clarification:"CLARIFICATION_REQUIRED"};
+  if(terminal[v.outcome as string] ? v.disposition!==terminal[v.outcome as string] : Object.hasOwn(v,"disposition")) throw new Error("Invalid disposition");
+  if(JSON.stringify(v).length>1024) throw new Error("Oversized preparation record");
+}
+export function copyPreparationRecord(record:PreparationRecord):PreparationRecord { return {...record,...(record.counts?{counts:{...record.counts}}:{})}; }
+/** Instrumentation callbacks cannot change learning behavior, even if a sink fails. */
+export function observePreparation(observer: PreparationObserver | undefined, stage: PreparationStage, outcome: Parameters<PreparationObserver>[1], reason: PreparationReason = "none", metadata?:PreparationMetadata) {
+  try { observer?.(stage, outcome, reason, metadata); } catch { /* Never log rejected payloads. */ }
+}
 const enums: Record<string, readonly string[]> = {
   name: EVENTS, operation: OPERATIONS, status: STATUSES, code: ERRORS,
   contentType: ["news", "opinion", "creative", "conversation", "academic", "everyday-life", "poetry", "theatre", "tongue-twisters", "unknown"],
@@ -42,8 +82,13 @@ export class BetaJournal {
   private session = crypto.randomUUID();
   private born: number;
   private events: BetaEvent[] = [];
+  private preparations: PreparationRecord[] = [];
   constructor(private now = Date.now) { this.born = now(); }
-  reset() { this.events = []; this.session = crypto.randomUUID(); this.born = this.now(); }
+  reset() { this.events = []; this.preparations = []; this.session = crypto.randomUUID(); this.born = this.now(); }
+  recordPreparation(record: PreparationRecord) {
+    try { validatePreparationRecord(record); this.sessionId(); this.preparations.push(copyPreparationRecord(record)); if(this.preparations.length > 1000) this.preparations.shift(); } catch { /* Privacy boundary. */ }
+  }
+  inspectPreparations() { this.sessionId(); return this.preparations.map(copyPreparationRecord); }
   sessionId() { if (this.now() - this.born >= 30 * 60_000) this.reset(); return this.session; }
   emit(data: BetaData) {
     // Strictly validate even runtime callers. Failure cannot break a lesson.

@@ -1,9 +1,11 @@
-import { PRONUNCIATION_SCHEMA, PRONUNCIATION_PROMPT, validatePronunciationProposal, inspectPronunciationProposal } from "./theatre-pronunciation";
+import { PRONUNCIATION_SCHEMA, PRONUNCIATION_PROMPT, validatePronunciationProposal, inspectPronunciationProposal, pronunciationDiagnosticCounts } from "./theatre-pronunciation";
 import type { PronunciationProposal, PronunciationInspection } from "./theatre-pronunciation";
 import { performanceInstructions, TheatreStyle } from "./theatre-performance";
 import { theatreLinguisticGuidance } from "./theatre-linguistic";
 import type OpenAI from "openai";
 import { providerCall } from "./beta-provider";
+import { observePreparation, PREPARATION_CONFIGURATION } from "./beta-events";
+import type { PreparationObserver } from "./beta-events";
 import type { TheatreItem } from "./theatre";
 import { theatreRole } from "./theatre-casting";
 import { AMBIENCE_SCHEMA, validateAmbience } from "./theatre-ambience";
@@ -11,7 +13,7 @@ import type { AmbienceRecommendation } from "./theatre-ambience";
 import { DIRECTOR_SCHEMA, DIRECTOR_PROMPT, validateDirector, directorContext } from "./theatre-director";
 import type { DirectorPlan } from "./theatre-director";
 
-export const DRAMATIC_ANALYSIS_MODEL = "gpt-5.4-mini";
+export const DRAMATIC_ANALYSIS_MODEL = PREPARATION_CONFIGURATION.model;
 export const ANALYSIS_TIMEOUT_MS = 20_000;
 // Explicit analysis budgets, not script limits. Oversized requests fall back
 // for the ENTIRE scene; no slicing, truncation or partial annotation acceptance.
@@ -77,9 +79,12 @@ function member<T extends string>(value: unknown, values: readonly T[]): value i
   return typeof value === "string" && values.includes(value as T);
 }
 
-export function validateDramaticAnalysis(value: unknown, items: readonly TheatreItem[]): DramaticAnalysis {
+export function validateDramaticAnalysis(value: unknown, items: readonly TheatreItem[], diagnostic?: PreparationObserver): DramaticAnalysis {
+  observePreparation(diagnostic,"dramatic_validation","started");
+  observePreparation(diagnostic,"dramatic_validation",value && typeof value==="object" && Object.hasOwn(value,"scene")?"present":"absent");
   // Director rejection is deliberately independent of the accepted CP3 plan.
   // Malformed new metadata cannot discard valid legacy direction or ambience.
+  observePreparation(diagnostic,"pronunciation_validation","started");
   let pronunciation: PronunciationProposal | undefined;
   let pronunciationInspection = inspectPronunciationProposal(undefined,items);
   if(value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value,"pronunciation")) {
@@ -87,13 +92,21 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
     pronunciation=validatePronunciationProposal(raw,items); pronunciationInspection=inspectPronunciationProposal(raw,items); value=base;
   }
   if(value && typeof value==="object" && !Array.isArray(value) && Object.hasOwn(value,"pronunciationInspection")) { const {pronunciationInspection: _ignored,...base}=value as Record<string,unknown>; value=base; }
+  observePreparation(diagnostic,"pronunciation_validation",pronunciationInspection.issues.some(i=>i.reason==="output_missing")?"absent":"present");
+  const counts=pronunciationDiagnosticCounts(pronunciationInspection.validEntries,new Set(pronunciationInspection.issues.filter(i=>i.index>=0).map(i=>i.index)).size);
+  if(pronunciationInspection.issues.length) {
+    for(const reason of new Set(pronunciationInspection.issues.map(i=>i.reason)))
+      observePreparation(diagnostic,reason==="evidence_mismatch"?"occurrence_evidence":reason==="inventory_incomplete"?"inventory":"pronunciation_validation","rejected",reason,{counts});
+  } else observePreparation(diagnostic,"pronunciation_validation","passed","none",{counts});
   let director: DirectorPlan | undefined;
+  observePreparation(diagnostic,"director_validation","started");
   if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "director")) {
     const { director: raw, ...base } = value as Record<string, unknown>;
     director = validateDirector(raw, items);
+    observePreparation(diagnostic,"director_validation",director?"passed":"fallback",director?"none":"director_plan_rejected");
     value = base;
-  }
-  const invalid = () => { throw new AnalysisFailure("invalid_analysis"); };
+  } else observePreparation(diagnostic,"director_validation","absent","director_plan_missing");
+  const invalid = () => { observePreparation(diagnostic,"dramatic_validation","rejected","invalid_dramatic_analysis"); throw new AnalysisFailure("invalid_analysis"); };
   if ((!objectWithKeys(value, ["version", "scene", "items"]) &&
     !objectWithKeys(value, ["version", "scene", "items", "ambience"])) || value.version !== 1) return invalid();
   const scene = value.scene;
@@ -111,6 +124,7 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
       !member(annotation.tone, TONES) || !member(annotation.pacing, PACING) || !member(annotation.intensity, INTENSITY)) return invalid();
     annotations.set(annotation.id, { id: annotation.id, tone: annotation.tone, pacing: annotation.pacing, intensity: annotation.intensity });
   }
+  observePreparation(diagnostic,"dramatic_validation","passed");
   // Copy only approved fields and join by ID. Model order never controls jobs.
   return {
     version: 1,
@@ -123,10 +137,11 @@ export function validateDramaticAnalysis(value: unknown, items: readonly Theatre
   };
 }
 
-export async function requestDramaticAnalysis(client: OpenAI, sceneJson: string, signal: AbortSignal, maxOutputTokens: number, includeDirector = false): Promise<unknown> {
+export async function requestDramaticAnalysis(client: OpenAI, sceneJson: string, signal: AbortSignal, maxOutputTokens: number, includeDirector = false, diagnostic?: PreparationObserver): Promise<unknown> {
   // Preparation can downgrade oversized Director plans to the complete legacy
   // scene analysis, without an extra request or any loss of script items.
   includeDirector = includeDirector && JSON.parse(sceneJson).directorRequested !== false;
+  observePreparation(diagnostic,"provider","started");
   const response = await providerCall("direction", () => client.responses.create({
     model: DRAMATIC_ANALYSIS_MODEL, store: false, truncation: "disabled",
     reasoning: { effort: "none" }, max_output_tokens: maxOutputTokens,
@@ -148,20 +163,34 @@ Return exact evidence excerpts (at most 400 characters each), their stable item 
       ...DRAMATIC_ANALYSIS_SCHEMA, required: [...DRAMATIC_ANALYSIS_SCHEMA.required, "director", "pronunciation"],
       properties: { ...DRAMATIC_ANALYSIS_SCHEMA.properties, director: DIRECTOR_SCHEMA, pronunciation: PRONUNCIATION_SCHEMA },
     } : {...DRAMATIC_ANALYSIS_SCHEMA,required:[...DRAMATIC_ANALYSIS_SCHEMA.required,"pronunciation"],properties:{...DRAMATIC_ANALYSIS_SCHEMA.properties,pronunciation:PRONUNCIATION_SCHEMA}} } },
-  }, { signal, timeout: ANALYSIS_TIMEOUT_MS, maxRetries: 0 }));
-  if (response.status !== "completed") throw new AnalysisFailure("incomplete_response");
-  try { return JSON.parse(response.output_text); }
-  catch { throw new AnalysisFailure("invalid_analysis"); }
+  }, { signal, timeout: ANALYSIS_TIMEOUT_MS, maxRetries: 0 })).catch(error => {
+    observePreparation(diagnostic,"provider","rejected",signal.aborted ? "cancelled" : error instanceof Error && ["APIConnectionTimeoutError","TimeoutError"].includes(error.name) ? "timeout" : "provider_failure");
+    throw error;
+  });
+  observePreparation(diagnostic,"provider","passed");
+  observePreparation(diagnostic,"structured_response","started");
+  if (response.status !== "completed") { observePreparation(diagnostic,"structured_response","rejected","incomplete_response"); throw new AnalysisFailure("incomplete_response"); }
+  if(typeof response.output_text!=="string" || !response.output_text.trim()) {
+    observePreparation(diagnostic,"structured_response","absent","structured_response_missing");
+    observePreparation(diagnostic,"structured_response","rejected","structured_response_missing");
+    throw new AnalysisFailure("invalid_analysis");
+  }
+  observePreparation(diagnostic,"structured_response","present");
+  try { const raw = JSON.parse(response.output_text); observePreparation(diagnostic,"structured_response","passed"); return raw; }
+  catch { observePreparation(diagnostic,"structured_response","rejected","parse_rejected"); throw new AnalysisFailure("invalid_analysis"); }
 }
 
 export async function prepareDramaticDirection(
   items: readonly TheatreItem[], analyzer?: SceneAnalyzer, timeoutMs = ANALYSIS_TIMEOUT_MS, ambienceDecision?: AmbienceRecommendation,
-  directorInput?: { characters: { speakerId: string; displayName: string }[] }
+  directorInput?: { characters: { speakerId: string; displayName: string }[] }, diagnostic?: PreparationObserver
 ): Promise<{ analysis: DramaticAnalysis | null; metadata: DirectionMetadata }> {
-  const fallback = (reason: AnalysisFallbackReason) => ({ analysis: null, metadata: {
+  observePreparation(diagnostic,"director","started");
+  const fallback = (reason: AnalysisFallbackReason) => { observePreparation(diagnostic,"director","rejected",
+    reason === "invalid_analysis" ? "analysis_rejected" : reason === "request_failed" ? "provider_failure" : reason === "unavailable" ? "analysis_unavailable" : reason);
+    return ({ analysis: null, metadata: {
     version: 1 as const, model: DRAMATIC_ANALYSIS_MODEL, status: "fallback" as const, fallbackReason: reason,
     expectedItemCount: items.length, annotatedItemCount: 0, fallbackItemCount: items.length,
-  } });
+  } }); };
   if (!items.length) return fallback("empty_scene");
   if (!analyzer) return fallback("unavailable");
   // Pass an immutable serialization rather than references to source items.
@@ -176,6 +205,7 @@ export async function prepareDramaticDirection(
   try {
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
+        observePreparation(diagnostic,"provider","rejected","timeout");
         reject(new AnalysisFailure("timeout"));
         abort.abort();
       }, timeoutMs);
@@ -183,7 +213,8 @@ export async function prepareDramaticDirection(
     // The deadline also covers transports that ignore AbortSignal. Late results
     // have no side effects and can never replace the chosen fallback plan.
     const raw = await Promise.race([Promise.resolve().then(() => analyzer(sceneJson, abort.signal, maxOutputTokens)), timeout]);
-    const analysis = validateDramaticAnalysis(raw, items);
+    const analysis = validateDramaticAnalysis(raw, items, diagnostic);
+    observePreparation(diagnostic,"director","passed");
     return { analysis, metadata: {
       version: 1, model: DRAMATIC_ANALYSIS_MODEL, status: "analyzed", fallbackReason: null,
       expectedItemCount: items.length, annotatedItemCount: analysis.items.length, fallbackItemCount: 0,

@@ -11,6 +11,8 @@ import { validateAmbience, ambienceStatus } from "./theatre-ambience";
 import type { AmbienceStatus, AmbienceRecommendation } from "./theatre-ambience";
 import { Preparation, PreparationState } from "./preparation";
 import { betaContext, betaHeaders, betaJournal, BetaData } from "./beta-events";
+import { validatePreparationRecord, copyPreparationRecord } from "./beta-events";
+import type { PreparationRecord } from "./beta-events";
 import { requestError } from "./safe-errors";
 import type { AmbienceKind, AmbienceProvider } from "./theatre-ambience";
 import type { TheatreResponse } from "./theatre";
@@ -39,6 +41,12 @@ export class ReadingPlaybackSession {
   readonly theatre: TheatrePlaybackController;
   readonly roleAssistance: HeldTurnAssistance;
   private lastDebugTrace: unknown = null;
+  private preparationReceipt: PreparationRecord | null = null;
+  private preparationSuccess: PreparationRecord | null = null;
+  private unconfirmedPreparationId: string | null = null;
+  getTheatrePreparationReceipt = () => this.preparationReceipt ? copyPreparationRecord(this.preparationReceipt) : null;
+  getTheatrePreparationSuccess = () => this.preparationSuccess ? copyPreparationRecord(this.preparationSuccess) : null;
+  getUnconfirmedTheatrePreparation = () => this.unconfirmedPreparationId ? {requestId:this.unconfirmedPreparationId} : null;
   private roleEpoch = 0;
   private pronunciationAuthority: {key:string;token:string} | null = null;
   private pendingClarification: {state:PronunciationClarification;text:string;speed:string;identity?:ContentIdentity;learnerSpeaker?:string} | null = null;
@@ -248,10 +256,23 @@ export class ReadingPlaybackSession {
     const run = async () => {
       try {
         const response = await this.fetchAudio("/api/read-passage", {
-          method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders() },
+          method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders(), "X-Theatre-Request-Id":preparationId,
+            ...(identity?.contentType === "theatre" ? {"X-Theatre-Preparation":"1"} : {}) },
           body: JSON.stringify({ text, speed, language, ...(authority?{pronunciationToken:authority.token}:{}),...(pronunciationAnswer?{pronunciationAnswer}:{}), ...(conversationTurnId ? { conversationTurnId } : {}), ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.reference || cached?.ambience ? {analysisCacheKey:cached.reference,...(cached.ambience ? {ambienceDecision:cached.ambience} : {})} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
         if (!current()) return;
+        // Retain only a closed, content-free server receipt; never a response body.
+        // Keep the last failure across stop/retry so the owner can still copy it.
+        {
+          try {
+            const receipt:unknown=JSON.parse(response.headers.get("X-Theatre-Preparation-Receipt") ?? "null");
+            validatePreparationRecord(receipt);
+            if(receipt.requestId===preparationId) {
+              if(!response.ok && ["failed","cancelled"].includes(receipt.outcome)) this.preparationReceipt=copyPreparationRecord(receipt);
+              if(response.ok && ["succeeded","clarification"].includes(receipt.outcome)) this.preparationSuccess=copyPreparationRecord(receipt);
+            }
+          } catch { /* Old deployments or untrusted diagnostic headers. */ }
+        }
         if (!response.ok) {
           if(response.status===429) failureCode="RATE_LIMITED";
           failureMessage = requestError(response.status,"reading");
@@ -341,6 +362,7 @@ export class ReadingPlaybackSession {
         }
       } catch (error) {
         if (!current()) return;
+        if(identity?.contentType === "theatre") this.unconfirmedPreparationId = this.preparationReceipt?.requestId === preparationId ? null : preparationId;
         this.preparation.finish(preparationId,"failed",failureCode); this.playbackEvent("failed");
         this.releaseOrdinary();
         if (sessionId !== null) this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");
