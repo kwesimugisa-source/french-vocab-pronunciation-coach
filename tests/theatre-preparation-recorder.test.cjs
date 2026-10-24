@@ -430,3 +430,173 @@ test('token diagnostics omit invalid values and reject free-form additions',()=>
     validate({...receipt,[field]:1000000});
   assert.ok(JSON.stringify(receipt).length<=1024);
 }));
+
+// Provider-boundary evidence is always synthetic; no real SDK transport is used.
+test('scene boundary counts canonical categories without retaining source or identities',()=>{
+  const load=createLoader(),records=[],d=new (load('lib/beta-server.ts').TheatrePreparationRecorder)(randomUUID(),r=>records.push(r));d.activate();
+  const items=[
+    {type:'dialogue',speaker:'PRIVATE_A',text:'PRIVATE dialogue'},
+    {type:'dialogue',speaker:'PRIVATE_B',text:'PRIVATE name'},
+    {type:'dialogue',speaker:'LE CH\u0152UR',text:'PRIVATE chorus'},
+    {type:'stage',speaker:'NARRATOR',text:'PRIVATE direction'},
+    {type:'stage',speaker:'NARRATOR',text:'PRIVATE silence',pauseMs:900},
+  ];
+  load('lib/theatre-provider-evidence.ts').recordSceneEvidence(items,1234,d.observe);
+  const b=records.find(r=>r.boundary)?.boundary;
+  assert.deepEqual(b,{kind:'scene',items:5,dialogue:3,stage:2,chorus:1,silence:1,characters:2,speakers:4,inputBytes:1234});
+  const receipt=d.finish(503);assert.equal(receipt.boundary,undefined);assert.equal(receipt.stage,'request');
+  assert.doesNotMatch(JSON.stringify(records),/PRIVATE|CH\u0152UR|NARRATOR/);
+  b.items=99;
+  assert.equal(load('lib/beta-events.ts').betaJournal.inspectPreparations().find(r=>r.boundary)?.boundary.items,5);
+});
+
+for(const [label,response,expected] of [
+  ['missing',{},['missing','missing','missing','missing','missing']],
+  ['zero',{usage:{input_tokens:0,output_tokens:0,total_tokens:0,output_tokens_details:{reasoning_tokens:0}}},['valid','valid','valid','valid','valid']],
+  ['null',{usage:null},['invalid','missing','missing','missing','missing']],
+  ['invalid',{usage:{input_tokens:'PRIVATE',output_tokens:-1,total_tokens:1000001,output_tokens_details:{reasoning_tokens:NaN}}},['valid','invalid','invalid','invalid','invalid']],
+]) test('usage evidence distinguishes '+label,()=>{
+  const load=createLoader(),b=load('lib/theatre-provider-evidence.ts').providerBoundaryEvidence(response,64000)[0];
+  assert.deepEqual([b.usage,b.inputState,b.outputState,b.reasoningState,b.totalState],expected);
+  if(label==='zero') for(const k of ['inputTokens','outputTokens','reasoningTokens','totalTokens']) assert.equal(b[k],0);
+  else for(const k of ['inputTokens','outputTokens','reasoningTokens','totalTokens']) assert.equal(b[k],undefined);
+  load('lib/beta-events.ts').validatePreparationBoundary(b);
+  assert.doesNotMatch(JSON.stringify(b),/PRIVATE/);
+});
+
+test('output shape counts only closed categories and never stores text or unknown type strings',()=>{
+  const load=createLoader(),out=load('lib/theatre-provider-evidence.ts').providerBoundaryEvidence({
+    output_text:'PRIVATE output',output:[
+      {type:'reasoning',summary:'PRIVATE'},
+      {type:'function_call',arguments:'PRIVATE'},
+      {type:'PRIVATE other'},
+      {type:'message',content:[{type:'output_text',text:'PRIVATE text'},{type:'refusal',refusal:'PRIVATE refusal'},{type:'PRIVATE content'}]},
+    ],max_output_tokens:64000,
+  },64000);
+  assert.deepEqual(out[1],{kind:'output',textState:'valid',itemsState:'valid',contentState:'valid',chars:14,items:4,messages:1,reasoning:1,functions:1,otherItems:1,textParts:1,refusals:1,otherParts:1});
+  assert.deepEqual(out[2],{kind:'config',maxState:'valid',maxMatch:'same',echoedMax:64000});
+  assert.doesNotMatch(JSON.stringify(out),/PRIVATE|arguments|summary|output_text/);
+});
+
+for(const [value,status,match] of [[undefined,'missing','unavailable'],[null,'invalid','unavailable'],['PRIVATE','invalid','unavailable'],[32000,'valid','different'],[64000,'valid','same']])
+test('echoed allowance is observable only: '+status+'/'+match+'/'+typeof value,()=>{
+  const b=createLoader()('lib/theatre-provider-evidence.ts').providerBoundaryEvidence({max_output_tokens:value},64000)[2];
+  assert.equal(b.maxState,status);assert.equal(b.maxMatch,match);
+  assert.equal(b.echoedMax,typeof value==='number'?value:undefined);
+  assert.doesNotMatch(JSON.stringify(b),/PRIVATE/);
+});
+
+test('boundary validation rejects unknown fields, getters, invalid numbers and free-form categories',()=>{
+  const {validatePreparationBoundary:validate,PREPARATION_BOUNDARY_RULES:rules}=createLoader()('lib/beta-events.ts');
+  for(const [kind,fields] of Object.entries(rules)) {
+    const b={kind,...Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,typeof v==='number'?v:v[0]]))};validate(b);
+    for(const [k,v] of Object.entries(fields)) {
+      for(const bad of typeof v==='number'?[-1,0.1,NaN,Infinity,v+1,'PRIVATE']:['PRIVATE',0,null])
+        assert.throws(()=>validate({...b,[k]:bad}));
+    }
+    for(const k of ['text','name','prompt','refusal','providerRequestId','contentHash','documentId','raw'])
+      assert.throws(()=>validate({...b,[k]:'PRIVATE'}));
+  }
+  let called=false;
+  assert.throws(()=>validate(Object.defineProperty({},'kind',{get(){called=true;return 'scene';}})));
+  assert.equal(called,false);
+  assert.throws(()=>validate({kind:'PRIVATE'}));
+});
+
+test('oversized/malformed output evidence is bounded without partial content counts',()=>{
+  const evidence=createLoader()('lib/theatre-provider-evidence.ts').providerBoundaryEvidence;
+  for(const output of [null,'PRIVATE',new Array(10001)]) {
+    const b=evidence({output},1)[1];assert.equal(b.itemsState,'invalid');assert.equal(b.items,undefined);
+  }
+  const b=evidence({output:[{type:'message',content:new Array(10001)}],output_text:'x'.repeat(10000001)},1)[1];
+  assert.equal(b.contentState,'invalid');assert.equal(b.textState,'invalid');
+  assert.equal(b.chars,undefined);assert.equal(b.textParts,undefined);
+  const missing=evidence({},1)[1];assert.equal(missing.itemsState,'missing');assert.equal(missing.textState,'missing');
+});
+
+for(const [label,status,text,reason] of [
+  ['success','completed',null,'none'],
+  ['incomplete','incomplete','PRIVATE partial','provider_output_limit'],
+  ['failed','failed','PRIVATE partial','provider_response_failed'],
+  ['malformed','completed','PRIVATE malformed','parse_rejected'],
+]) test('pipeline retains boundary evidence: '+label,()=>logged(async records=>{
+  const h=harness(raw=>({transport:{status,output_text:text??JSON.stringify(raw),
+    output:[{type:'message',content:[{type:'output_text',text:'PRIVATE payload'}]}],
+    incomplete_details:{reason:'max_output_tokens'},max_output_tokens:5120,
+    usage:{input_tokens:33,output_tokens:0,total_tokens:33,output_tokens_details:{reasoning_tokens:0}}}}));
+  const response=await h.request(),receipt=JSON.parse(response.headers.get('X-Theatre-Preparation-Receipt'));
+  assert.equal(response.status,label==='success'?200:503);assert.equal(receipt.reason,reason);
+  const boundaries=records.filter(r=>r.boundary);
+  assert.deepEqual(boundaries.map(r=>r.boundary.kind),['scene','usage','output','config']);
+  const scene=boundaries[0].boundary;assert.equal(scene.items,2);assert.equal(scene.characters,2);assert.ok(scene.inputBytes>0);
+  assert.equal(boundaries[1].boundary.outputTokens,0);assert.equal(boundaries[1].boundary.inputTokens,33);
+  assert.equal(boundaries[3].boundary.maxMatch,'same');
+  assert.equal(receipt.boundary,undefined);
+  assert.equal(records.filter(terminal).length,1);
+  assert.ok(records.length<=64);assert.ok(records.every(r=>JSON.stringify(r).length<=1024));
+  assert.doesNotMatch(JSON.stringify(records),/PRIVATE|ALICE|BOB|French convention|sceneToken|output_text/);
+  if(label!=='success') assert.equal((await response.json()).reason,receipt.reason);
+}));
+
+test('maximum boundary records fit 1024 characters and do not consume terminal size budget',()=>{
+  const load=createLoader(),{PREPARATION_BOUNDARY_RULES:rules,PREPARATION_CONFIGURATION:config,validatePreparationRecord:validate}=load('lib/beta-events.ts');
+  const records=[],d=new (load('lib/beta-server.ts').TheatrePreparationRecorder)(randomUUID(),r=>records.push(r));d.activate();
+  for(const [kind,fields] of Object.entries(rules)) {
+    const boundary={kind,...Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,typeof v==='number'?v:[...v].sort((a,b)=>b.length-a.length)[0]]))};
+    const record={...config,timestamp:1e15,elapsedMs:3600000,totalElapsedMs:3600000,requestId:randomUUID(),build:'a'.repeat(40),stage:'provider_evidence',outcome:'present',reason:'none',retryable:false,boundary};
+    validate(record);assert.ok(JSON.stringify(record).length<=1024);
+    d.observe('provider_evidence','present','none',{boundary});
+  }
+  assert.equal(records.filter(r=>r.boundary).length,4);
+  d.observe('structured_response','rejected','provider_output_limit');
+  const receipt=d.finish(503);assert.equal(receipt.reason,'provider_output_limit');assert.equal(receipt.boundary,undefined);
+  assert.ok(JSON.stringify(receipt).length<=1024);
+  assert.throws(()=>validate({...receipt,boundary:{kind:'config',maxState:'missing',maxMatch:'unavailable'}}));
+});
+
+test('scene evidence is exact for 117 items and provider budget remains unchanged',async()=>{
+  const load=createLoader(),items=Array.from({length:117},(_,index)=>({id:'line-'+index,index,type:'dialogue',speaker:'PRIVATE',text:'PRIVATE',sourceLines:[index+1]}));
+  const observations=[];
+  const result=await load('lib/theatre-direction.ts').prepareDramaticDirection(items,async(json,signal,budget)=>{
+    assert.equal(budget,64000);assert.equal(JSON.parse(json).items.length,117);
+    assert.equal(observations.find(r=>r.boundary)?.boundary.inputBytes,Buffer.byteLength(json));
+    throw Error('PRIVATE');
+  },20000,undefined,{characters:[]},(stage,outcome,reason,metadata)=>observations.push({stage,outcome,reason,...metadata}));
+  assert.equal(result.metadata.fallbackReason,'request_failed');
+  assert.equal(observations.find(r=>r.boundary).boundary.items,117);
+  assert.doesNotMatch(JSON.stringify(observations),/PRIVATE/);
+});
+
+test('evidence burst preserves the 64-record ceiling, terminal cause and correlation',()=>{
+  const load=createLoader(),records=[],id=randomUUID(),d=new (load('lib/beta-server.ts').TheatrePreparationRecorder)(id,r=>records.push(r));d.activate();
+  const evidence=load('lib/theatre-provider-evidence.ts');
+  for(let i=0;i<50;i++) evidence.recordProviderEvidence({usage:{output_tokens:0},output:[],max_output_tokens:64000},64000,d.observe);
+  d.observe('structured_response','rejected','provider_output_limit');
+  const receipt=d.finish(503);d.finish(503);d.observe('provider','passed');
+  assert.equal(records.length,64);assert.equal(records.filter(terminal).length,1);
+  assert.equal(receipt.reason,'provider_output_limit');assert.equal(receipt.stage,'structured_response');
+  assert.equal(receipt.boundary,undefined);
+  assert.ok(records.every(r=>r.requestId===id&&JSON.stringify(r).length<=1024));
+});
+
+test('boundary privacy rejects hidden fields and never executes getters or custom serialization',()=>{
+  const load=createLoader(),validate=load('lib/beta-events.ts').validatePreparationBoundary;
+  const good={kind:'config',maxState:'missing',maxMatch:'unavailable'};
+  let executed=false;
+  for(const key of ['name','toJSON']) {
+    const b=Object.defineProperty({...good},key,{value:key==='toJSON'?()=>{executed=true;return 'PRIVATE';}:'PRIVATE'});
+    assert.throws(()=>validate(b));
+  }
+  const response=Object.defineProperty({},'usage',{get(){executed=true;throw Error('PRIVATE');}});
+  const result=load('lib/theatre-provider-evidence.ts').providerBoundaryEvidence(response,64000);
+  assert.equal(result[0].usage,'missing');assert.equal(executed,false);
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+});
+
+test('provider evidence observers cannot change the response or fail preparation',()=>{
+  const helper=createLoader()('lib/theatre-provider-evidence.ts');
+  const response=Object.freeze({status:'incomplete',usage:Object.freeze({output_tokens:0}),output:Object.freeze([])});
+  const before=JSON.stringify(response);
+  assert.doesNotThrow(()=>helper.recordProviderEvidence(response,64000,()=>{throw Error('PRIVATE sink');}));
+  assert.equal(JSON.stringify(response),before);
+});

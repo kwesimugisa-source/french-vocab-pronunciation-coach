@@ -1,3 +1,4 @@
+import { recordSceneEvidence, recordProviderEvidence } from "./theatre-provider-evidence";
 import { PRONUNCIATION_SCHEMA, PRONUNCIATION_PROMPT, validatePronunciationProposal, inspectPronunciationProposal, pronunciationDiagnosticCounts } from "./theatre-pronunciation";
 import type { PronunciationProposal, PronunciationInspection } from "./theatre-pronunciation";
 import { performanceInstructions, TheatreStyle } from "./theatre-performance";
@@ -186,6 +187,7 @@ Return exact evidence excerpts (at most 400 characters each), their stable item 
     throw error;
   });
   observePreparation(diagnostic,"provider","passed","none",tokenMetadata(maxOutputTokens,response.usage));
+  recordProviderEvidence(response,maxOutputTokens,diagnostic);
   observePreparation(diagnostic,"structured_response","started");
   if (response.status !== "completed") {
     const reason=responseFailure(response.status,response.incomplete_details?.reason);
@@ -224,7 +226,9 @@ export async function prepareDramaticDirection(
   const sceneJson = JSON.stringify({ items, documentLanguageHint: "fr", ...(ambienceDecision ? { ambienceDecision } : {}),
     ...(directorInput ? { directorRequested: includeDirector, characters: directorInput.characters } : {}) });
   const maxOutputTokens = includeDirector ? 4096 + items.length * 512 : 2048 + items.length * 192;
-  if (new TextEncoder().encode(sceneJson).length > ANALYSIS_INPUT_BYTES) return fallback("input_budget");
+  const inputBytes = new TextEncoder().encode(sceneJson).length;
+  recordSceneEvidence(items,inputBytes,diagnostic);
+  if (inputBytes > ANALYSIS_INPUT_BYTES) return fallback("input_budget");
   if (maxOutputTokens > ANALYSIS_OUTPUT_TOKENS) return fallback("output_budget");
   const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;

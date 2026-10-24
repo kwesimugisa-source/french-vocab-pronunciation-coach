@@ -63,14 +63,17 @@ export class TheatrePreparationRecorder {
       }
       return;
     }
-    if(!metadata || typeof metadata!=="object" || Array.isArray(metadata) || Object.keys(metadata).some(k=>k!=="counts"&&k!=="authorityRevision"&&!PREPARATION_TOKEN_FIELDS.includes(k as typeof PREPARATION_TOKEN_FIELDS[number]))) return;
+    if(!metadata || typeof metadata!=="object" || Array.isArray(metadata) || Object.keys(metadata).some(k=>k!=="counts"&&k!=="authorityRevision"&&k!=="boundary"&&!PREPARATION_TOKEN_FIELDS.includes(k as typeof PREPARATION_TOKEN_FIELDS[number]))) return;
     const record = {...PREPARATION_CONFIGURATION,...this.timing(stage),build:this.build,requestId:this.requestId,stage,outcome,reason,retryable:false,...metadata};
     try { validatePreparationRecord(record); } catch { return; }
     if(outcome==="started") { this.starts.set(stage,this.now()); record.elapsedMs=0; }
-    this.stage = stage;
+    if(stage!=="provider_evidence") this.stage = stage;
     if(outcome === "rejected" && !this.failure) this.failure = {stage,reason};
     if(stage === "authority" && outcome === "passed") this.clarification = reason === "linguistic_ambiguity";
-    this.metadata={...this.metadata,...metadata,...(metadata.counts?{counts:{...this.metadata.counts,...metadata.counts}}:{})};
+    // Evidence is retained in individual journal/log records only. Keep the
+    // terminal receipt within its existing size budget and failure-stage semantics.
+    const {boundary:_boundary,...retainedMetadata}=metadata;
+    this.metadata={...this.metadata,...retainedMetadata,...(metadata.counts?{counts:{...this.metadata.counts,...metadata.counts}}:{})};
     // Reserve a terminal and one possible ignored late result: 64 records total.
     if(this.count++ < 62) this.emit(record);
   };

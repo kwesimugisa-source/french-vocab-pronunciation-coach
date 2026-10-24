@@ -18,17 +18,46 @@ export type BetaData = {
 };
 export type BetaEvent = BetaData & { eventId: string; sessionId: string; timestamp: number };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-export const PREPARATION_STAGES = ["request", "director", "provider", "structured_response", "director_validation", "dramatic_validation", "pronunciation_validation", "inventory", "occurrence_evidence", "authority", "response"] as const;
+export const PREPARATION_STAGES = ["request", "director", "provider", "provider_evidence", "structured_response", "director_validation", "dramatic_validation", "pronunciation_validation", "inventory", "occurrence_evidence", "authority", "response"] as const;
 export const PREPARATION_OUTCOMES = ["started", "present", "absent", "passed", "rejected", "fallback", "reused", "ignored", "succeeded", "failed", "cancelled", "clarification"] as const;
 export const PROVIDER_RESPONSE_REASONS = ["provider_output_limit", "provider_content_filter", "provider_incomplete_unknown", "provider_response_failed", "provider_response_cancelled", "provider_response_nonterminal", "provider_status_unknown", "provider_refusal"] as const;
 export type ProviderResponseReason = typeof PROVIDER_RESPONSE_REASONS[number];
 export const PREPARATION_TOKEN_FIELDS = ["requestedMaxOutputTokens", "outputTokens", "reasoningTokens"] as const;
+// Boundary evidence is emitted separately, never accumulated into a terminal receipt.
+const fieldStates = ["missing", "invalid", "valid"] as const;
+export const PREPARATION_BOUNDARY_RULES = {
+  scene: {items:100_000, dialogue:100_000, stage:100_000, chorus:100_000, silence:100_000, characters:100_000, speakers:100_000, inputBytes:1_000_000},
+  usage: {usage:fieldStates, inputState:fieldStates, outputState:fieldStates, reasoningState:fieldStates, totalState:fieldStates,
+    inputTokens:1_000_000, outputTokens:1_000_000, reasoningTokens:1_000_000, totalTokens:1_000_000},
+  output: {textState:fieldStates, itemsState:fieldStates, contentState:fieldStates, chars:10_000_000,
+    items:10_000, messages:10_000, reasoning:10_000, functions:10_000, otherItems:10_000, textParts:10_000, refusals:10_000, otherParts:10_000},
+  config: {maxState:fieldStates, echoedMax:1_000_000, maxMatch:["same","different","unavailable"]},
+} as const;
+type BoundaryRules = typeof PREPARATION_BOUNDARY_RULES;
+export type PreparationBoundary = {[K in keyof BoundaryRules]: {kind:K} & {
+  -readonly [F in keyof BoundaryRules[K]]?: BoundaryRules[K][F] extends number ? number : BoundaryRules[K][F] extends readonly string[] ? BoundaryRules[K][F][number] : never
+}}[keyof BoundaryRules];
+export function validatePreparationBoundary(value:unknown): asserts value is PreparationBoundary {
+  if(!value || typeof value!=="object" || ![Object.prototype,null].includes(Object.getPrototypeOf(value))) throw new Error("Invalid boundary");
+  const v=value as Record<string,unknown>;
+  // Check data descriptors before reading kind or any value.
+  if(Reflect.ownKeys(v).some(k=>typeof k!=="string" || !Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,"value"))) throw new Error("Invalid boundary");
+  if(typeof v.kind!=="string" || !Object.hasOwn(PREPARATION_BOUNDARY_RULES,v.kind)) throw new Error("Invalid boundary");
+  const rules=PREPARATION_BOUNDARY_RULES[v.kind as keyof BoundaryRules] as Record<string,number|readonly string[]>;
+  if(Reflect.ownKeys(v).some(k=>k!=="kind"&&!Object.hasOwn(rules,k))) throw new Error("Invalid boundary");
+  for(const [key,rule] of Object.entries(rules)) {
+    if(typeof rule==="number") {
+      if(v[key]===undefined && v.kind!=="scene") continue;
+      if(!Number.isSafeInteger(v[key]) || (v[key] as number)<0 || (v[key] as number)>rule) throw new Error("Invalid boundary count");
+    } else if(!rule.includes(v[key] as string)) throw new Error("Invalid boundary category");
+  }
+}
 export const PREPARATION_REASONS = ["none", ...PROVIDER_RESPONSE_REASONS, "provider_failure", "timeout", "cancelled", "incomplete_response", "structured_response_missing", "parse_rejected", "validation_rejected", "invalid_dramatic_analysis", "output_missing", "evidence_mismatch", "inventory_incomplete", "missing_cast_coverage", "invalid_established_decision", "unbound_occurrence", "authority_rejected", "linguistic_ambiguity", "analysis_unavailable", "analysis_rejected", "director_plan_missing", "director_plan_rejected", "late_result_ignored", "input_budget", "output_budget", "empty_scene", "invalid_request", "rate_limited", "preparation_failed"] as const;
 export const PREPARATION_DISPOSITIONS = ["READY", "CLARIFICATION_REQUIRED", "TECHNICAL_HOLD", "CANCELLED"] as const;
 export const PREPARATION_CONFIGURATION = {schemaVersion:2,provider:"openai",model:"gpt-5.4-mini",directorSchemaVersion:1,pronunciationSchemaVersion:1,pronunciationPolicyVersion:2} as const;
 export const PREPARATION_COUNT_FIELDS = ["established", "ambiguous", "conflicting", "unknown", "rejected", "accepted", "unbound"] as const;
 export type PreparationCounts = Partial<Record<typeof PREPARATION_COUNT_FIELDS[number], number>>;
-export type PreparationMetadata = {counts?:PreparationCounts; authorityRevision?:number} & Partial<Record<typeof PREPARATION_TOKEN_FIELDS[number],number>>;
+export type PreparationMetadata = {counts?:PreparationCounts; authorityRevision?:number; boundary?:PreparationBoundary} & Partial<Record<typeof PREPARATION_TOKEN_FIELDS[number],number>>;
 export type PreparationStage = typeof PREPARATION_STAGES[number];
 export type PreparationReason = typeof PREPARATION_REASONS[number];
 export type PreparationOutcome = typeof PREPARATION_OUTCOMES[number];
@@ -42,7 +71,7 @@ export function validatePreparationRecord(value: unknown): asserts value is Prep
   if (!plain(value)) throw new Error("Invalid preparation record");
   const v = value as Record<string, unknown>;
   const required=["timestamp","build","requestId","stage","outcome","reason","retryable","elapsedMs","totalElapsedMs",...Object.keys(PREPARATION_CONFIGURATION)];
-  if (Reflect.ownKeys(v).some(k=>typeof k!=="string" || ![...required,"counts","authorityRevision","disposition",...PREPARATION_TOKEN_FIELDS].includes(k) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,"value")) || !required.every(k => Object.hasOwn(v,k)) ||
+  if (Reflect.ownKeys(v).some(k=>typeof k!=="string" || ![...required,"counts","authorityRevision","disposition","boundary",...PREPARATION_TOKEN_FIELDS].includes(k) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v,k)!,"value")) || !required.every(k => Object.hasOwn(v,k)) ||
     !Number.isSafeInteger(v.timestamp) || (v.timestamp as number) < 0 || (v.timestamp as number) > 1e15 ||
     typeof v.build !== "string" || !(v.build === "unknown" || (v.build.length === 40 && /^[0-9a-f]{40}$/.test(v.build))) || !isPreparationId(v.requestId) ||
     !PREPARATION_STAGES.includes(v.stage as PreparationStage) || !PREPARATION_OUTCOMES.includes(v.outcome as PreparationOutcome) ||
@@ -53,11 +82,15 @@ export function validatePreparationRecord(value: unknown): asserts value is Prep
   for(const key of PREPARATION_TOKEN_FIELDS) if(v[key]!==undefined && (!Number.isSafeInteger(v[key]) || (v[key] as number)<0 || (v[key] as number)>1_000_000)) throw new Error("Invalid token count");
   if(v.authorityRevision!==undefined && (!Number.isInteger(v.authorityRevision)||(v.authorityRevision as number)<1||(v.authorityRevision as number)>10000)) throw new Error("Invalid revision");
   if(v.counts!==undefined && (!plain(v.counts) || Reflect.ownKeys(v.counts).some(k=>typeof k!=="string" || !PREPARATION_COUNT_FIELDS.includes(k as typeof PREPARATION_COUNT_FIELDS[number]) || !Object.hasOwn(Object.getOwnPropertyDescriptor(v.counts,k)!,"value")) || Object.values(v.counts).some(n=>!Number.isInteger(n)||(n as number)<0||(n as number)>100000))) throw new Error("Invalid counts");
+  if(v.boundary!==undefined) {
+    validatePreparationBoundary(v.boundary);
+    if(v.stage!=="provider_evidence" || v.outcome!=="present" || v.reason!=="none") throw new Error("Invalid boundary event");
+  }
   const terminal: Record<string,string> = {succeeded:"READY",failed:"TECHNICAL_HOLD",cancelled:"CANCELLED",clarification:"CLARIFICATION_REQUIRED"};
   if(terminal[v.outcome as string] ? v.disposition!==terminal[v.outcome as string] : Object.hasOwn(v,"disposition")) throw new Error("Invalid disposition");
   if(JSON.stringify(v).length>1024) throw new Error("Oversized preparation record");
 }
-export function copyPreparationRecord(record:PreparationRecord):PreparationRecord { return {...record,...(record.counts?{counts:{...record.counts}}:{})}; }
+export function copyPreparationRecord(record:PreparationRecord):PreparationRecord { return {...record,...(record.boundary?{boundary:{...record.boundary}}:{}),...(record.counts?{counts:{...record.counts}}:{})}; }
 /** Instrumentation callbacks cannot change learning behavior, even if a sink fails. */
 export function observePreparation(observer: PreparationObserver | undefined, stage: PreparationStage, outcome: Parameters<PreparationObserver>[1], reason: PreparationReason = "none", metadata?:PreparationMetadata) {
   try { observer?.(stage, outcome, reason, metadata); } catch { /* Never log rejected payloads. */ }
