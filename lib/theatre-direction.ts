@@ -16,6 +16,8 @@ import type { DirectorPlan } from "./theatre-director";
 
 export const DRAMATIC_ANALYSIS_MODEL = PREPARATION_CONFIGURATION.model;
 export const ANALYSIS_TIMEOUT_MS = 20_000;
+// Full Nolan analysis includes the Director plan; reduced analysis keeps its existing limit.
+export const DIRECTOR_ANALYSIS_TIMEOUT_MS = 60_000;
 // Explicit analysis budgets, not script limits. Oversized requests fall back
 // for the ENTIRE scene; no slicing, truncation or partial annotation acceptance.
 export const ANALYSIS_INPUT_BYTES = 120_000;
@@ -182,7 +184,7 @@ Return exact evidence excerpts (at most 400 characters each), their stable item 
       ...DRAMATIC_ANALYSIS_SCHEMA, required: [...DRAMATIC_ANALYSIS_SCHEMA.required, "director", "pronunciation"],
       properties: { ...DRAMATIC_ANALYSIS_SCHEMA.properties, director: DIRECTOR_SCHEMA, pronunciation: PRONUNCIATION_SCHEMA },
     } : {...DRAMATIC_ANALYSIS_SCHEMA,required:[...DRAMATIC_ANALYSIS_SCHEMA.required,"pronunciation"],properties:{...DRAMATIC_ANALYSIS_SCHEMA.properties,pronunciation:PRONUNCIATION_SCHEMA}} } },
-  }, { signal, timeout: ANALYSIS_TIMEOUT_MS, maxRetries: 0 })).catch(error => {
+  }, { signal, timeout: includeDirector ? DIRECTOR_ANALYSIS_TIMEOUT_MS : ANALYSIS_TIMEOUT_MS, maxRetries: 0 })).catch(error => {
     observePreparation(diagnostic,"provider","rejected",signal.aborted ? "cancelled" : error instanceof Error && ["APIConnectionTimeoutError","TimeoutError"].includes(error.name) ? "timeout" : "provider_failure");
     throw error;
   });
@@ -209,7 +211,7 @@ Return exact evidence excerpts (at most 400 characters each), their stable item 
 }
 
 export async function prepareDramaticDirection(
-  items: readonly TheatreItem[], analyzer?: SceneAnalyzer, timeoutMs = ANALYSIS_TIMEOUT_MS, ambienceDecision?: AmbienceRecommendation,
+  items: readonly TheatreItem[], analyzer?: SceneAnalyzer, timeoutMs?: number, ambienceDecision?: AmbienceRecommendation,
   directorInput?: { characters: { speakerId: string; displayName: string }[] }, diagnostic?: PreparationObserver
 ): Promise<{ analysis: DramaticAnalysis | null; metadata: DirectionMetadata }> {
   observePreparation(diagnostic,"director","started");
@@ -238,7 +240,7 @@ export async function prepareDramaticDirection(
         observePreparation(diagnostic,"provider","rejected","timeout");
         reject(new AnalysisFailure("timeout"));
         abort.abort();
-      }, timeoutMs);
+      }, timeoutMs ?? (includeDirector ? DIRECTOR_ANALYSIS_TIMEOUT_MS : ANALYSIS_TIMEOUT_MS));
     });
     // The deadline also covers transports that ignore AbortSignal. Late results
     // have no side effects and can never replace the chosen fallback plan.

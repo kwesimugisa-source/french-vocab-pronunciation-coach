@@ -147,6 +147,24 @@ for(const kind of ['cancelled','timeout']) test(`${kind}: no contradictory termi
   assert.deepEqual(JSON.parse(response.headers.get('X-Theatre-Preparation-Receipt')),ends[0]);
 }));
 
+test('full Nolan 60-second deadline remains retryable technical HTTP failure without clarification',t=>logged(async records=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const h=harness(()=>new Promise(()=>{}));
+  const pending=h.request();
+  while(h.calls()===0) await new Promise(resolve=>setImmediate(resolve));
+  t.mock.timers.tick(59999);
+  assert.equal(records.filter(terminal).length,0);
+  t.mock.timers.tick(1);
+  const response=await pending,problem=await response.json();
+  assert.equal(response.status,503);
+  assert.equal(problem.code,'THEATRE_ANALYSIS_FAILED');
+  assert.equal(problem.reason,'timeout');assert.equal(problem.retryable,true);
+  assert.equal(problem.mode,undefined);assert.equal(problem.entries,undefined);
+  const ends=records.filter(terminal);assert.equal(ends.length,1);
+  assert.equal(ends[0].reason,'timeout');assert.equal(ends[0].disposition,'TECHNICAL_HOLD');
+  t.mock.timers.tick(120000);assert.equal(h.calls(),1);
+}));
+
 test('actual Director deadline records timeout, not cancellation from internal abort',()=>logged(async records=>{
   const load=createLoader(),d=new (load('lib/beta-server.ts').TheatrePreparationRecorder)(randomUUID());d.activate();
   const items=load('lib/theatre.ts').parseTheatreItems(source);
