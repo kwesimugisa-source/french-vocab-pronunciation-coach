@@ -17,6 +17,9 @@ function harness(mutate=x=>x){
 const cases=[
  ['accented lexical ID','validation_rejected',r=>{r.pronunciation.entries[0].id='élise';return r;}],
  ['malformed lexical ID','validation_rejected',r=>{r.pronunciation.entries[0].id='name 0';return r;}],
+ ...['\n','\r','\r\n','\u2028','\u2029'].map((suffix,index)=>[
+  `trailing line terminator ${index} in lexical ID`,'validation_rejected',r=>{r.pronunciation.entries[0].id=`name-0${suffix}`;return r;}
+ ]),
  ['evidence mismatch','evidence_mismatch',r=>{r.pronunciation.entries[0].evidence[0].quote='Not authored';return r;}],
  ['missing output','output_missing',r=>{delete r.pronunciation;return r;}],
  ['explicit incomplete inventory','inventory_incomplete',r=>{r.pronunciation.context.inventoryComplete=false;return r;}],
@@ -42,6 +45,29 @@ test('schema, prompt and runtime enforce the identical lexical ID language',()=>
  for(const id of ['name-0','LEXICAL_01','a'.repeat(80),'','é','has space','a'.repeat(81),'x\n']){
   const raw=proposal(items);raw.entries[0].id=id;assert.equal(!!p.validatePronunciationProposal(raw,items),new RegExp(pattern).test(id),id);assert.equal(new RegExp(pattern).test(id),['name-0','LEXICAL_01','a'.repeat(80)].includes(id));
  }
+});
+
+const lexicalCases=[
+ ['conventional lowercase','thomas',true],['hyphen','cast-0',true],['underscore','cast_1',true],
+ ['mixed ASCII','A1',true],['80-character boundary','a'.repeat(80),true],
+ ['empty','',false],['whitespace-only',' \t',false],['embedded space','cast 0',false],
+ ['accented machine ID','élise',false],['forbidden punctuation','cast.0',false],
+ ['81-character boundary','a'.repeat(81),false],['forbidden suffix','cast-0!',false],
+ ['LF suffix','cast-0\n',false],['CR suffix','cast-0\r',false],['CRLF suffix','cast-0\r\n',false],
+ ['Unicode line separator suffix','cast-0\u2028',false],['Unicode paragraph separator suffix','cast-0\u2029',false],
+];
+for(const [label,id,accepted] of lexicalCases)test(`provider-compatible lexical ID contract: ${label}`,()=>{
+ const h=harness(),p=h.load('lib/theatre-pronunciation.ts'),items=h.load('lib/theatre.ts').parseTheatreItems(source);
+ // Pin the empirically tested provider form; runtime and prompt share its source.
+ assert.equal(p.LEXICAL_ID_PATTERN,'^[a-zA-Z0-9_-]{1,80}$');
+ const schema=p.PRONUNCIATION_SCHEMA.properties.entries.items.properties.id;
+ const schemaAccepts=id.length>=schema.minLength&&id.length<=schema.maxLength&&new RegExp(schema.pattern).test(id);
+ assert.equal(schemaAccepts,accepted);
+ const raw=proposal(items);raw.entries[0].id=id;
+ assert.equal(!!p.validatePronunciationProposal(raw,items),accepted);
+ const inspection=p.inspectPronunciationProposal(raw,items);
+ assert.equal(!!inspection.proposal,accepted);
+ assert.deepEqual(inspection.issues,accepted?[]:[{index:0,reason:'validation_rejected'}]);
 });
 test('one technically invalid entry preserves unrelated valid decisions internally but cannot accept partial inventory',()=>{
  const h=harness(),items=h.load('lib/theatre.ts').parseTheatreItems(source),p=h.load('lib/theatre-pronunciation.ts'),raw=proposal(items);raw.entries[0].id='élise';

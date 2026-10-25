@@ -4,7 +4,10 @@ import type { TheatreItem } from "./theatre";
 
 export const PRONUNCIATION_VERSION = 1;
 // Internal identifiers only; authored names and aliases retain their Unicode spelling.
-export const LEXICAL_ID_PATTERN = "^[a-zA-Z0-9_-]{1,80}(?![\\s\\S])";
+// Provider controls associated the previous negative-lookahead form with zero-usage
+// incomplete/max_output_tokens responses; this simple form passed those controls.
+// This is an observed compatibility boundary, not a claim about provider internals.
+export const LEXICAL_ID_PATTERN = "^[a-zA-Z0-9_-]{1,80}$";
 export type PronunciationFailureReason = "provider_failure" | "timeout" | "output_missing" | "validation_rejected" | "evidence_mismatch" | "inventory_incomplete" | "invalid_dramatic_analysis";
 export class PronunciationPreparationError extends Error {
   constructor(readonly reason: PreparationReason) { super(reason); }
