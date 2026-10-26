@@ -1,7 +1,7 @@
 // SERVER ONLY: never imported by a client component. No public inspection route.
 import { betaJournal, BetaData } from "./beta-events";
 import { isPreparationId, validatePreparationRecord, copyPreparationRecord, PREPARATION_CONFIGURATION, PREPARATION_TOKEN_FIELDS } from "./beta-events";
-import type { PreparationRecord, PreparationStage, PreparationReason, PreparationObserver, PreparationMetadata } from "./beta-events";
+import type { PreparationRecord, PreparationStage, PreparationReason, PreparationObserver, PreparationMetadata, PreparationLineage } from "./beta-events";
 import { RATE_MESSAGE } from "./safe-errors";
 export { RATE_MESSAGE } from "./safe-errors";
 export class RequestGate {
@@ -33,17 +33,27 @@ export class TheatrePreparationRecorder {
   private stage: PreparationStage = "request";
   private failure: {stage: PreparationStage; reason: PreparationReason} | null = null;
   private clarification = false;
+  private accepted: "PASS1_READY" | "PASS2_READY" | "READY" | null = null;
   private lateRecorded = false;
   private readonly born: number;
   private starts = new Map<PreparationStage,number>();
   private metadata:PreparationMetadata = {};
   readonly requestId: string;
   private readonly build: string;
-  constructor(requestId: unknown, private sink = (record: PreparationRecord) => console.info("beta_theatre_preparation", JSON.stringify(record)), private now=Date.now) {
+  constructor(requestId: unknown, private sink = (record: PreparationRecord) => console.info("beta_theatre_preparation", JSON.stringify(record)), private now=Date.now, private lineage?:PreparationLineage) {
     this.born = now();
     this.requestId = isPreparationId(requestId) ? requestId : crypto.randomUUID();
     const build = process.env.VERCEL_GIT_COMMIT_SHA;
     this.build = build?.length === 40 && /^[0-9a-f]{40}$/.test(build) ? build : "unknown";
+    if(lineage) {
+      // Validate before copying or retaining optional diagnostic context. Invalid
+      // caller metadata must not leak through a receipt or fail preparation.
+      try {
+        validatePreparationRecord({...PREPARATION_CONFIGURATION,timestamp:this.born,elapsedMs:0,totalElapsedMs:0,
+          build:this.build,requestId:this.requestId,stage:"request",outcome:"started",reason:"none",retryable:false,lineage});
+        this.lineage=Object.freeze({...lineage});
+      } catch { this.lineage=undefined; }
+    }
   }
   activate() { if(!this.active && !this.terminal) { this.active = true; this.observe("request", "started"); } }
   private emit(record: PreparationRecord) {
@@ -57,22 +67,27 @@ export class TheatrePreparationRecorder {
     if(!this.active) return;
     if(this.terminal) {
       // One bounded, nonterminal indication that a provider settled too late.
-      if(!this.lateRecorded && ["CANCELLED","TECHNICAL_HOLD"].includes(this.terminal.disposition!) && stage==="provider" && ["passed","rejected"].includes(outcome)) {
+      if(!this.lateRecorded && ["CANCELLED","TECHNICAL_HOLD"].includes(this.terminal.disposition!) && ["provider","pass1_provider","pass2_provider"].includes(stage) && ["passed","rejected"].includes(outcome)) {
         this.lateRecorded=true;
-        this.emit({...PREPARATION_CONFIGURATION,...this.timing(stage),build:this.build,requestId:this.requestId,stage,outcome:"ignored",reason:"late_result_ignored",retryable:false});
+        this.emit({...PREPARATION_CONFIGURATION,...this.timing(stage),...(this.lineage?{lineage:this.lineage}:{}),build:this.build,requestId:this.requestId,stage,outcome:"ignored",reason:"late_result_ignored",retryable:false});
       }
       return;
     }
-    if(!metadata || typeof metadata!=="object" || Array.isArray(metadata) || Object.keys(metadata).some(k=>k!=="counts"&&k!=="authorityRevision"&&k!=="boundary"&&!PREPARATION_TOKEN_FIELDS.includes(k as typeof PREPARATION_TOKEN_FIELDS[number]))) return;
-    const record = {...PREPARATION_CONFIGURATION,...this.timing(stage),build:this.build,requestId:this.requestId,stage,outcome,reason,retryable:false,...metadata};
+    if(!metadata || typeof metadata!=="object" || Array.isArray(metadata) || Object.keys(metadata).some(k=>k!=="counts"&&k!=="authorityRevision"&&k!=="boundary"&&k!=="checkpoint"&&!PREPARATION_TOKEN_FIELDS.includes(k as typeof PREPARATION_TOKEN_FIELDS[number]))) return;
+    const record = {...PREPARATION_CONFIGURATION,...this.timing(stage),...(this.lineage?{lineage:this.lineage}:{}),build:this.build,requestId:this.requestId,stage,outcome,reason,retryable:false,...metadata};
     try { validatePreparationRecord(record); } catch { return; }
     if(outcome==="started") { this.starts.set(stage,this.now()); record.elapsedMs=0; }
     if(stage!=="provider_evidence") this.stage = stage;
     if(outcome === "rejected" && !this.failure) this.failure = {stage,reason};
     if(stage === "authority" && outcome === "passed") this.clarification = reason === "linguistic_ambiguity";
+    if(this.lineage && outcome === "passed") {
+      if(stage === "pass1_accepted") this.accepted="PASS1_READY";
+      if(stage === "pass2_validation") this.accepted="PASS2_READY";
+      if(stage === "ticket") this.accepted="READY";
+    }
     // Evidence is retained in individual journal/log records only. Keep the
     // terminal receipt within its existing size budget and failure-stage semantics.
-    const {boundary:_boundary,...retainedMetadata}=metadata;
+    const {boundary:_boundary,checkpoint:_checkpoint,...retainedMetadata}=metadata;
     this.metadata={...this.metadata,...retainedMetadata,...(metadata.counts?{counts:{...this.metadata.counts,...metadata.counts}}:{})};
     // Reserve a terminal and one possible ignored late result: 64 records total.
     if(this.count++ < 62) this.emit(record);
@@ -81,13 +96,13 @@ export class TheatrePreparationRecorder {
   finish(status: number, cancellation?: "cancelled" | "timeout") {
     if(!this.active) return null;
     if(this.terminal) return copyPreparationRecord(this.terminal);
-    const failed = status >= 400;
-    const stage = cancellation ? this.stage : failed ? this.failure?.stage ?? this.stage : "response";
-    const reason = cancellation ?? (failed ? this.failure?.reason ?? (status === 429 ? "rate_limited" : status < 500 ? "invalid_request" : "preparation_failed") : this.clarification ? "linguistic_ambiguity" : "none");
-    const disposition=cancellation === "cancelled" ? "CANCELLED" : failed ? "TECHNICAL_HOLD" : this.clarification ? "CLARIFICATION_REQUIRED" : "READY";
-    this.terminal = {...PREPARATION_CONFIGURATION,...this.timing(stage),...this.metadata,build:this.build,requestId:this.requestId,stage,disposition,
+    const failed = status >= 400 || (!!this.lineage && (!!this.failure || cancellation === "timeout" || (!this.accepted && !this.clarification)));
+    const stage = this.lineage && this.failure && cancellation !== "cancelled" ? this.failure.stage : cancellation ? this.stage : failed ? this.failure?.stage ?? this.stage : "response";
+    const reason = (this.lineage && cancellation !== "cancelled" ? this.failure?.reason : undefined) ?? cancellation ?? (failed ? this.failure?.reason ?? (status === 429 ? "rate_limited" : status < 500 ? "invalid_request" : "preparation_failed") : this.clarification ? "linguistic_ambiguity" : "none");
+    const disposition=cancellation === "cancelled" ? "CANCELLED" : failed ? "TECHNICAL_HOLD" : this.clarification ? "CLARIFICATION_REQUIRED" : this.lineage ? this.accepted! : "READY";
+    this.terminal = {...PREPARATION_CONFIGURATION,...this.timing(stage),...this.metadata,...(this.lineage?{lineage:this.lineage}:{}),build:this.build,requestId:this.requestId,stage,disposition,
       outcome:cancellation === "cancelled" ? "cancelled" : failed ? "failed" : this.clarification ? "clarification" : "succeeded",
-      reason,retryable:!!cancellation || status === 429 || status >= 500};
+      reason,retryable:!!cancellation || status === 429 || status >= 500 || (!!this.lineage && failed)};
     this.emit(this.terminal);
     return copyPreparationRecord(this.terminal);
   }

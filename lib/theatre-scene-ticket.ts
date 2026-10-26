@@ -1,4 +1,5 @@
 import { assertPronunciationAuthority } from "./theatre-pronunciation-authority";
+import { openTwoPassScene } from "./theatre-preparation-token";
 // Server-only, authenticated encrypted transport of an already validated plan.
 // No public storage, new credentials, content diagnostics or worker affinity.
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
@@ -20,7 +21,9 @@ export function sealScene(plan: TheatrePlan, speed: number, secret: string, now=
   if(token.length>450_000) throw new Error("Plan trop volumineux.");
   return token;
 }
-export function openScene(token: unknown, secret: string, now=Date.now()): SceneTicket {
+export function openScene(token: unknown, secret: string, now=Date.now()): SceneTicket | ReturnType<typeof openTwoPassScene> {
+  // Explicit new-purpose dispatch. Legacy v2 decoding/sealing remains unchanged.
+  if(typeof token === "string" && token.startsWith("ready-v3.")) return openTwoPassScene(token,secret,now);
   if(typeof token!=="string" || token.length<40 || token.length>450_000 || !/^[A-Za-z0-9_-]+$/.test(token)) throw new Error("INVALID_SCENE");
   const data=Buffer.from(token,"base64url"), decipher=createDecipheriv("aes-256-gcm",key(secret),data.subarray(0,12));
   decipher.setAAD(Buffer.from("theatre-scene-v1"));decipher.setAuthTag(data.subarray(12,28));
