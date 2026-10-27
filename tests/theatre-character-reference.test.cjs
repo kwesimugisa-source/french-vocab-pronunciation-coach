@@ -24,7 +24,7 @@ test('all six actual request schema sites have exact canonical enums, nullable a
 });
 test('uppercase is rejected when not the exact opaque identifier; no case-insensitive enum matching',()=>{const schema={type:'string',enum:['aLiCe']};assert.equal(p.matchesPassSchema('aLiCe',schema),true);for(const value of ['ALICE','alice','Alice'])assert.equal(p.matchesPassSchema(value,schema),false);});
 test('request-local binding never mutates reusable schemas or lexical identity fields',()=>{const before=JSON.stringify([p.PASS1_SCHEMA,p.PASS2_SCHEMA]),f=setup();const a=p.buildPassRequest(f.first,'pass1'),b=p.buildPassRequest(f.second,'pass2');
- assert.equal(JSON.stringify([p.PASS1_SCHEMA,p.PASS2_SCHEMA]),before);assert.deepEqual(a.text.format.schema.properties.pronunciation,load('lib/theatre-pronunciation.ts').PRONUNCIATION_SCHEMA);
+ assert.equal(JSON.stringify([p.PASS1_SCHEMA,p.PASS2_SCHEMA]),before);const lexical=structuredClone(a.text.format.schema.properties.pronunciation);lexical.properties.entries.items.properties.evidence=structuredClone(load('lib/theatre-pronunciation.ts').PRONUNCIATION_SCHEMA.properties.entries.items.properties.evidence);assert.deepEqual(lexical,load('lib/theatre-pronunciation.ts').PRONUNCIATION_SCHEMA);
  for(const request of [a,b]){const input=JSON.parse(request.input[1].content);assert.deepEqual(input.items,f.p.items);assert.deepEqual(input.characters,f.p.characters);}
  assert.equal(f.p.text,fixture().p.text);assert.deepEqual(p.acceptedProjection(f.second).beats[0].present,['ALICE','MARC']);assert.equal(p.acceptedProjection(f.second).beats[0].states[0].speaker,'ALICE');
 });

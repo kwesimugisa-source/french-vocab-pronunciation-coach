@@ -20,6 +20,7 @@ import { theatreRoles } from "./theatre-role-play";
 import type { TheatreRoleRun } from "./theatre-role-play";
 import { ConversationPlayback } from "./conversation-playback";
 import { HeldTurnAssistance } from "./held-turn-assistance";
+import { theatreContinuation, TheatreContinuation } from "./theatre-preparation-client";
 
 export type PronunciationClarification = { entries: PronunciationEntry[]; inventoryComplete: boolean; excludedIds?: string[] };
 type ReadingSnapshot = {
@@ -48,6 +49,7 @@ export class ReadingPlaybackSession {
   getTheatrePreparationSuccess = () => this.preparationSuccess ? copyPreparationRecord(this.preparationSuccess) : null;
   getUnconfirmedTheatrePreparation = () => this.unconfirmedPreparationId ? {requestId:this.unconfirmedPreparationId} : null;
   private roleEpoch = 0;
+  private theatrePreparationContinuation: {key:string;value:TheatreContinuation} | null = null;
   private pronunciationAuthority: {key:string;token:string} | null = null;
   private pendingClarification: {state:PronunciationClarification;text:string;speed:string;identity?:ContentIdentity;learnerSpeaker?:string} | null = null;
   async resolvePronunciation(state:PronunciationClarification,entries:PronunciationEntry[],inventoryReviewed:boolean,excludedIds:string[] = []) {
@@ -55,7 +57,7 @@ export class ReadingPlaybackSession {
     if(!pending || pending.state!==state || this.snapshot.clarification!==state || this.snapshot.busy) return;
     await this.start(pending.text,pending.speed,pending.identity,undefined,pending.learnerSpeaker,{entries,inventoryReviewed,excludedIds});
   }
-  clearPronunciationAuthority() { this.stop(); this.pronunciationAuthority=null; }
+  clearPronunciationAuthority() { this.stop(); this.pronunciationAuthority=null; this.theatrePreparationContinuation=null; }
 
   exportTheatreDiagnostics = () => {
     const snapshot=this.theatre.getSnapshot();
@@ -148,7 +150,7 @@ export class ReadingPlaybackSession {
     betaJournal.emit({...run.context,name:"playback",status,durationMs:Math.max(0,Date.now()-run.since),...(logicalItems!==undefined?{logicalItems}:{}),...(status==="failed"?{code:"PLAYBACK_FAILED" as const}:{})});
     if (["completed","failed","cancelled"].includes(status)) this.lifecycle=null;
   }
-  invalidateDocument() { this.stop(); this.analysisCache=null; this.pronunciationAuthority=null; }
+  invalidateDocument() { this.stop(); this.analysisCache=null; this.pronunciationAuthority=null; this.theatrePreparationContinuation=null; }
   private releaseOrdinary() {
     if (this.ordinary) {
       this.ordinary.onended = this.ordinary.onerror = null;
@@ -241,6 +243,8 @@ export class ReadingPlaybackSession {
     const authorityKey=JSON.stringify([text,identity?.documentId,identity?.revision,identity?.contentType,language,identity?.theatreCharacters??[]]);
     if(this.pronunciationAuthority?.key!==authorityKey) this.pronunciationAuthority=null;
     const authority=this.pronunciationAuthority;
+    const continuationKey=JSON.stringify([authorityKey,performanceStyle]);
+    if(this.theatrePreparationContinuation?.key!==continuationKey) this.theatrePreparationContinuation=null;
     const cached=identity?.contentType === "theatre" ? this.analysisCache : null;
     this.update({ mode: "pending", error: null });
     this.conversationRequest = identity?.contentType === "conversation" && !conversationTurnId;
@@ -253,21 +257,40 @@ export class ReadingPlaybackSession {
     let failureCode: "RATE_LIMITED" | "PROVIDER_FAILED" = "PROVIDER_FAILED";
     let failureMessage = requestError(500, "reading");
     let analysisFailed = false;
+    let requestId=preparationId;
     const run = async () => {
       try {
-        const response = await this.fetchAudio("/api/read-passage", {
-          method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders(), "X-Theatre-Request-Id":preparationId,
+        let responseData: unknown;
+        const send = () => this.fetchAudio("/api/read-passage", {
+          method: "POST", headers: { "Content-Type": "application/json", ...betaHeaders(), "X-Theatre-Request-Id":requestId,
             ...(identity?.contentType === "theatre" ? {"X-Theatre-Preparation":"1"} : {}) },
-          body: JSON.stringify({ text, speed, language, ...(authority?{pronunciationToken:authority.token}:{}),...(pronunciationAnswer?{pronunciationAnswer}:{}), ...(conversationTurnId ? { conversationTurnId } : {}), ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.reference || cached?.ambience ? {analysisCacheKey:cached.reference,...(cached.ambience ? {ambienceDecision:cached.ambience} : {})} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
+          body: JSON.stringify({ text, speed, language, ...(this.theatrePreparationContinuation?{preparationContinuation:this.theatrePreparationContinuation.value}:{}), ...(authority?{pronunciationToken:authority.token}:{}),...(pronunciationAnswer?{pronunciationAnswer}:{}), ...(conversationTurnId ? { conversationTurnId } : {}), ...(identity?.contentType === "theatre" ? {performanceStyle} : {}), ...(cached?.reference || cached?.ambience ? {analysisCacheKey:cached.reference,...(cached.ambience ? {ambienceDecision:cached.ambience} : {})} : cached && Date.now()<cached.retryAt ? {skipAnalysis:true} : {}), ...(identity ? { documentId: identity.documentId, revision: identity.revision, contentType: identity.contentType, ...(identity.theatreCharacters ? {theatreCharacters:identity.theatreCharacters} : {}) } : {}) }), signal: request.signal,
         });
+        let response=await send();
         if (!current()) return;
+        // At most one continuation per user action: advancing an accepted Pass 1
+        // is not retrying a failed provider call. Never loop on failure.
+        if(response.ok && response.headers.get("Content-Type")?.includes("application/json")) {
+          const pending=await response.json();
+          responseData=pending;
+          if(!current()) return;
+          if(pending?.mode === "theatre-preparation") {
+            const next=theatreContinuation(pending.preparationContinuation);
+            if(!next) throw new Error("Invalid continuation");
+            this.theatrePreparationContinuation={key:continuationKey,value:next};
+            requestId=crypto.randomUUID();
+            response=await send();
+            responseData=undefined;
+            if(!current()) return;
+          }
+        }
         // Retain only a closed, content-free server receipt; never a response body.
         // Keep the last failure across stop/retry so the owner can still copy it.
         {
           try {
             const receipt:unknown=JSON.parse(response.headers.get("X-Theatre-Preparation-Receipt") ?? "null");
             validatePreparationRecord(receipt);
-            if(receipt.requestId===preparationId) {
+            if(receipt.requestId===requestId) {
               if(!response.ok && ["failed","cancelled"].includes(receipt.outcome)) this.preparationReceipt=copyPreparationRecord(receipt);
               if(response.ok && ["succeeded","clarification"].includes(receipt.outcome)) this.preparationSuccess=copyPreparationRecord(receipt);
             }
@@ -284,8 +307,11 @@ export class ReadingPlaybackSession {
             this.update({clarification:null});
             this.analysisCache=null;
             this.pronunciationAuthority=null;
+            const next=theatreContinuation(problem.preparationContinuation);
+            this.theatrePreparationContinuation=next?{key:continuationKey,value:next}:null;
             failureMessage="La préparation de la scène a échoué. Relancez la lecture pour réessayer l’analyse.";
           }
+          if(problem?.code==="PRONUNCIATION_EXPIRED") { this.theatrePreparationContinuation=null; this.pronunciationAuthority=null; }
           if(authority) {
             if(problem?.code==="INVALID_PRONUNCIATION_ANSWER") failureMessage="Vérifiez les noms, les langues et les indications. Résolvez les décisions incertaines ou excluez explicitement les propositions incorrectes.";
             if(problem?.code==="PRONUNCIATION_EXPIRED") failureMessage="La préparation des noms a expiré ou le texte a changé. Recommencez explicitement cette préparation.";
@@ -294,7 +320,7 @@ export class ReadingPlaybackSession {
         }
         if ((response.headers.get("Content-Type") || "").includes("application/json")) {
           if (identity?.contentType === "conversation" && !conversationTurnId) {
-            const data: unknown = await response.json();
+            const data: unknown = responseData ?? await response.json();
             if (!current() || this.captures) return;
             this.conversation.accept(data, text, ({ "very-slow": 0.7, slow: 0.85, normal: 1, fast: 1.15 } as Record<string, number>)[speed]);
             this.preparation.finish(preparationId,"completed");
@@ -303,17 +329,20 @@ export class ReadingPlaybackSession {
           }
           if (identity && identity.contentType !== "theatre")
             throw new Error("Le mode audio reçu ne correspond pas au texte.");
-          const data: unknown = await response.json();
+          const data: unknown = responseData ?? await response.json();
           if (!current()) return;
-          const clarification=data as {mode?:string;entries?:PronunciationEntry[];inventoryComplete?:boolean;pronunciationToken?:string};
+          const clarification=data as {mode?:string;entries?:PronunciationEntry[];inventoryComplete?:boolean;pronunciationToken?:string;preparationContinuation?:unknown};
           if(clarification.mode==="pronunciation-clarification") {
             if(!Array.isArray(clarification.entries)||typeof clarification.pronunciationToken!=="string") throw new Error("Invalid clarification");
+            const continuation=theatreContinuation(clarification.preparationContinuation);
+            this.theatrePreparationContinuation=continuation?{key:continuationKey,value:continuation}:null;
             const state={entries:clarification.entries,inventoryComplete:clarification.inventoryComplete===true};
             this.pronunciationAuthority={key:authorityKey,token:clarification.pronunciationToken};
             this.pendingClarification={state,text,speed,identity,learnerSpeaker};
             this.theatre.stop(); this.preparation.finish(preparationId,"completed");
             this.update({mode:"theatre",clarification:state});return;
           }
+          this.theatrePreparationContinuation=null;
           const scene = data as TheatreResponse;
           if (theatreStyle(scene.performanceStyle) !== performanceStyle)
             throw new Error("Le style audio reçu ne correspond pas au style demandé.");
@@ -362,7 +391,7 @@ export class ReadingPlaybackSession {
         }
       } catch (error) {
         if (!current()) return;
-        if(identity?.contentType === "theatre") this.unconfirmedPreparationId = this.preparationReceipt?.requestId === preparationId ? null : preparationId;
+        if(identity?.contentType === "theatre") this.unconfirmedPreparationId = this.preparationReceipt?.requestId === requestId ? null : requestId;
         this.preparation.finish(preparationId,"failed",failureCode); this.playbackEvent("failed");
         this.releaseOrdinary();
         if (sessionId !== null) this.theatre.failGeneration(sessionId, "Impossible de charger la lecture IA.");

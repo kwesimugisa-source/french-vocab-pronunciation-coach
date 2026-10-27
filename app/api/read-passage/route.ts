@@ -16,6 +16,8 @@ import { readingMode } from "../../../lib/content-routing";
 import { isEffectiveType, MAX_TEXT_LENGTH, TTS_INPUT_LIMIT, validateIdentity } from "../../../lib/content-document";
 
 import { validateTheatreCharacters } from "../../../lib/theatre-characters";
+import { preparationStrategy } from "../../../lib/theatre-preparation-strategy";
+import { prepareProductionResponse } from "../../../lib/theatre-production-preparation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -122,6 +124,10 @@ async function handlePost(req: Request, diagnostic?: TheatrePreparationRecorder)
       let performanceStyle;
       try { performanceStyle = theatreStyle(body.performanceStyle); }
       catch { return new Response("Style théâtral invalide.", {status:400}); }
+      if (preparationStrategy() === "TWO_PASS") return prepareProductionResponse({text,documentId:body.documentId,revision:body.revision,
+        performanceStyle,theatreCharacters,preparationContinuation:body.preparationContinuation,pronunciationAnswer:body.pronunciationAnswer},
+        {client,secret:apiKey,speed:playbackSpeed,signal:req.signal,requestId:req.headers.get("X-Theatre-Request-Id") ?? undefined});
+      if(body.preparationContinuation !== undefined) return Response.json({code:"PRONUNCIATION_EXPIRED"},{status:410});
       const sourceDigest=pronunciationSourceDigest(text,body.documentId,body.revision,theatreCharacters);
       let priorPlan;
       if(body.pronunciationToken !== undefined) {
@@ -202,4 +208,4 @@ async function handlePost(req: Request, diagnostic?: TheatrePreparationRecorder)
     return new Response("Impossible de préparer la lecture. Réessayez.", { status: 500 });
   }
 }
-export const POST = protectedRoute("reading", handlePost, {theatrePreparation:true});
+export const POST = protectedRoute("reading", handlePost, {theatrePreparation:()=>preparationStrategy()==="MONOLITHIC"});

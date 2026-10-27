@@ -115,9 +115,12 @@ export class TheatrePreparationRecorder {
     return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
   }
 }
-export function protectedRoute(operation: NonNullable<BetaData["operation"]>, handler: (req: Request, diagnostic?: TheatrePreparationRecorder) => Promise<Response>, options: { gate?: RequestGate; deadlineMs?: number; theatrePreparation?: boolean } = {}) {
+export function protectedRoute(operation: NonNullable<BetaData["operation"]>, handler: (req: Request, diagnostic?: TheatrePreparationRecorder) => Promise<Response>, options: { gate?: RequestGate; deadlineMs?: number; theatrePreparation?: boolean | (()=>boolean) } = {}) {
   return async (req: Request): Promise<Response> => {
-    const diagnostic = options.theatrePreparation ? new TheatrePreparationRecorder(req.headers.get("X-Theatre-Request-Id")) : undefined;
+    // Delegated two-pass requests own a lineage recorder; never duplicate its
+    // terminal receipt or its bounded per-invocation record budget.
+    const record = typeof options.theatrePreparation === "function" ? options.theatrePreparation() : options.theatrePreparation;
+    const diagnostic = record ? new TheatrePreparationRecorder(req.headers.get("X-Theatre-Request-Id")) : undefined;
     if(req.headers.get("X-Theatre-Preparation") === "1") diagnostic?.activate();
     const respond = (response: Response, cancellation?: "cancelled" | "timeout") => diagnostic?.response(response,cancellation) ?? response;
     // Same-origin browser requests only; no IP identity or fingerprinting.
